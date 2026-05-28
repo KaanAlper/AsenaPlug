@@ -241,6 +241,7 @@ class WarpTray:
         self.tray.setContextMenu(self.menu)
 
         self._last_mode: str | None = None
+        self._initialized = False
         self.refresh()
         self.tray.setVisible(True)
 
@@ -292,7 +293,7 @@ class WarpTray:
         self.http2_action.setChecked(mode == "http2")
         self.http3_action.setChecked(mode == "http3")
 
-        if self._last_mode is not None and mode != self._last_mode:
+        if self._initialized and mode != self._last_mode:
             if mode is None:
                 body = "Disconnected"
                 icon = "network-offline"
@@ -312,6 +313,7 @@ class WarpTray:
                 stderr=subprocess.DEVNULL,
             )
         self._last_mode = mode
+        self._initialized = True
 
     def run(self):
         sys.exit(self.app.exec())
