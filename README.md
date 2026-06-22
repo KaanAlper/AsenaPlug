@@ -1,7 +1,8 @@
 # warp-tray
 
-Cloudflare WARP (MASQUE/HTTP-3) via [usque](https://github.com/Diniboy1123/usque)
-with a system-tray indicator for Hyprland + Quickshell.
+Cloudflare WARP (MASQUE/usque) with a **selective routing** system-tray indicator for Hyprland + Quickshell.
+
+**Physical internet is the default.** Only specific apps and domains in your blacklist are routed through WARP.
 
 What you get:
 
@@ -10,53 +11,69 @@ What you get:
   - green "W" when connected, gray outline when disconnected
   - left click toggles, right click opens menu
   - state-change notifications via `notify-send`
+- **Force WARP** submenu — pick which apps or interfaces go through WARP
+- **Blacklist** submenu — domain list (e.g. GoodByDPI list), edit or reload live
 - Hyprland autostart so the tray comes back after every reboot
-- Dynamic gateway detection so it works on any Wi-Fi (home, school, hotspot)
+- Dynamic gateway detection so it works on any network
 
-Tested on **CachyOS / Arch + Hyprland (illogical-impulse dots)**. Vanilla
-`hyprland.conf` is also handled.
+Tested on **CachyOS / Arch + Hyprland (end-4 / illogical-impulse dots)**.
 
 ---
 
 ## One-liner install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KaanAlper/warp-tray/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kaanalper/warp-tray-setup/main/install.sh | bash
 ```
-
 
 You will be prompted once for `sudo` (the script re-launches itself as root)
 and once for the `usque register` step (creates `~/config.json`, your WARP
 device identity — **back this file up**).
-
-That's it. After the script finishes, left-click the new tray icon to
-connect. After a reboot the tray auto-starts via Hyprland's exec hook.
 
 ---
 
 ## Manual install (cloned repo)
 
 ```bash
-git clone https://github.com/KaanAlper/warp-tray.git
-cd REPO
+git clone https://github.com/kaanalper/warp-tray-setup.git
+cd warp-tray-setup
 ./install.sh
 ```
 
 ---
 
+## How selective routing works
+
+```
+physical default route  ─── Zen Browser, everything else
+warp-only.slice cgroup  ─── Discord (app entry in warp-route.conf)
+dnsmasq + nftables      ─── blacklist domains (nhentai, xvideos, etc.)
+```
+
+- **App routing**: apps listed under `app` in `~/.config/warp-route.conf` are automatically moved into the `warp-only.slice` systemd cgroup. Any PID in that cgroup gets `fwmark 0x43` via an nftables cgroup rule → routes to table 201 → tun0.
+- **Domain routing**: a dnsmasq instance on `127.0.0.2:53` uses Yandex's port-1253 DNS to bypass Turkish ISP port-53 interception. For each blacklisted domain, DNS responses populate an nftables `warp_hosts` IP set. Traffic to those IPs gets the same fwmark.
+- **Interface routing**: `iface` entries in `warp-route.conf` apply an nftables PREROUTING rule.
+- **TCP MSS clamp**: tun0 MTU=1280 vs LAN MTU=1500. Without clamping, large TLS handshake packets get dropped silently. Fixed with `tcp option maxseg size set 1220` in POSTROUTING.
+
+---
+
 ## What the installer does
 
-1. Detects Arch + `yay`, installs `python-pyside6`, `libnotify`, plus
-   `usque-bin` (or `usque`) from the AUR.
-2. Writes `/usr/local/bin/warp-on` and `/usr/local/bin/warp-off`.
-3. Drops a `visudo`-validated `/etc/sudoers.d/warp` granting NOPASSWD for
-   **only those two commands** — minimal attack surface.
-4. Installs `~/.local/bin/warp-tray` (PySide6, SNI tray icon).
-5. Appends a Hyprland autostart hook to your `custom/execs.lua` (or your
-   vanilla `hyprland.conf`). Idempotent — re-run safely.
-6. Runs `usque register` if no `~/config.json` exists.
+1. Installs `python-pyside6`, `libnotify`, `dnsmasq`, `nftables`, plus `usque-bin` from AUR.
+2. Writes these scripts to `/usr/local/bin/`:
+   - `warp-on` — starts usque, sets up nftables/iproute2 policy routing, starts dnsmasq
+   - `warp-off` — tears down everything
+   - `warp-bypass-reload` — reloads iface rules from conf without restarting WARP
+   - `warp-dnsmasq-gen` — generates `/etc/dnsmasq-warp.conf` from `~/.config/warp-blacklist.txt`
+   - `warp-dns-reload` — reruns `warp-dnsmasq-gen` and restarts dnsmasq live
+3. Drops `/etc/sudoers.d/warp` — NOPASSWD for only those five commands.
+4. Installs `~/.local/bin/warp-tray` (PySide6 tray).
+5. Installs `~/.local/bin/discord` — launcher wrapper that puts Discord in `warp-only.slice`.
+6. Creates `~/.config/warp-route.conf` template (if missing).
+7. Appends Hyprland autostart to `custom/execs.lua` or `hyprland.conf`.
+8. Runs `usque register` if no `~/config.json` exists.
 
-Re-running the installer is safe; everything is overwrite-or-skip.
+Re-running is safe; everything is overwrite-or-skip.
 
 ---
 
@@ -64,36 +81,19 @@ Re-running the installer is safe; everything is overwrite-or-skip.
 
 | Path | Owner | Purpose |
 |------|-------|---------|
-| `/usr/local/bin/warp-on` | root:root 0755 | Bring tunnel up + routes + DNS |
-| `/usr/local/bin/warp-off` | root:root 0755 | Tear down tunnel + restore |
-| `/etc/sudoers.d/warp` | root:root 0440 | NOPASSWD for those two only |
+| `/usr/local/bin/warp-on` | root 0755 | Bring tunnel up + routes + nft + dnsmasq |
+| `/usr/local/bin/warp-off` | root 0755 | Tear everything down |
+| `/usr/local/bin/warp-bypass-reload` | root 0755 | Reload iface rules live |
+| `/usr/local/bin/warp-dnsmasq-gen` | root 0755 | Generate dnsmasq config from blacklist |
+| `/usr/local/bin/warp-dns-reload` | root 0755 | Hot-reload DNS blacklist |
+| `/etc/sudoers.d/warp` | root 0440 | NOPASSWD for the above only |
 | `~/.local/bin/warp-tray` | user 0755 | Tray icon (PySide6) |
-| `~/.config/hypr/custom/execs.lua` | user | Hyprland autostart (line appended) |
-| `~/config.json` | user 0644 | usque device key — **back this up** |
+| `~/.local/bin/discord` | user 0755 | Discord launcher (warp-only.slice) |
+| `~/.config/warp-route.conf` | user | App/iface routing config (tray r/w) |
+| `~/.config/warp-blacklist.txt` | user | Domain blacklist (one per line) |
+| `~/config.json` | user | usque device key — **back this up** |
+| `/etc/dnsmasq-warp.conf` | root | Generated dnsmasq config |
 | `/var/log/usque.log` | root | Tunnel diagnostics |
-
----
-
-## Why MASQUE instead of WireGuard WARP
-
-Stock Cloudflare WARP (`warp-cli`) uses WireGuard. In Turkey (and other
-DPI-aggressive regions) WireGuard sometimes survives, sometimes gets
-throttled, and the official client can be brittle on Linux (no captive-portal
-support, fights with NetworkManager).
-
-`usque` uses Cloudflare's newer **MASQUE-over-HTTP/3** transport — same
-network, modern protocol, traffic indistinguishable from any other HTTP/3
-session. Lighter DPI footprint, no `warp-svc` daemon, runs as your user.
-
----
-
-## Why a custom tray instead of just `warp-cli` GUI
-
-- `warp-cli` has no first-party tray on Linux at all.
-- We want **per-network toggling** (off for school captive portal, on for
-  home Discord access) — a one-click affordance.
-- Quickshell on Hyprland presents an SNI tray; PySide6's
-  `QSystemTrayIcon` registers via the same protocol → native look.
 
 ---
 
@@ -101,66 +101,63 @@ session. Lighter DPI footprint, no `warp-svc` daemon, runs as your user.
 
 | Action | How |
 |--------|-----|
-| Toggle (off → HTTP/2 connect / on → disconnect) | Left-click tray icon |
-| Menu (Disconnect / HTTP/2 / HTTP/3 / Quit) | Right-click tray icon |
-| Switch mode while connected | Pick HTTP/2 or HTTP/3 in the menu — it disconnects, waits, reconnects in the new mode |
-| Connect from terminal | `sudo -n warp-on` (HTTP/2) or `sudo -n warp-on http3` |
-| Disconnect from terminal | `sudo -n warp-off` |
-| See tunnel diagnostics | `tail -f /var/log/usque.log` |
-| Check current state | `ip link show tun0` (exists ⇒ on) |
+| Toggle WARP | Left-click tray icon |
+| Force specific app through WARP | Right-click → Force WARP → Add running app |
+| Force interface through WARP | Right-click → Force WARP → Add interface… |
+| Add domain to blacklist | Right-click → Blacklist → Domain ekle… |
+| Edit blacklist file | Right-click → Blacklist → Düzenle… |
+| Reload DNS after editing blacklist | Right-click → Blacklist → DNS yenile |
+| Connect HTTP/2 (default, DPI-stealthy) | Left-click or right-click → HTTP/2 |
+| Connect HTTP/3 (faster on clean lines) | Right-click → HTTP/3 |
+| Disconnect | Right-click → Disconnect or left-click |
+| Terminal connect | `sudo -n warp-on` or `sudo -n warp-on http3` |
+| Terminal disconnect | `sudo -n warp-off` |
+| Tunnel diagnostics | `tail -f /var/log/usque.log` |
 
-The icon polls `tun0` + the running `usque` cmdline every 3 s, so external
-changes (script call, reboot, WARP dropping itself) are reflected within ~3 s,
-and the menu always shows which mode is currently active.
-
-### HTTP/2 vs HTTP/3 — which one?
+### HTTP/2 vs HTTP/3
 
 | | HTTP/2 (TCP+TLS) | HTTP/3 (QUIC/UDP) |
 |---|---|---|
-| ISP shaping in TR | Low — looks like normal HTTPS | High — UDP 443 throttled |
-| Handshake latency | 2–3 RTT | 0–1 RTT |
-| Head-of-line blocking | TCP-level | None (per-stream) |
-| Throughput on clean networks | Slightly lower | Slightly higher |
-| Throughput on TR ISPs (with QUIC shaping) | Higher in practice | Lower in practice |
-| Discord WebSocket stability | Better — fewer zombie sockets | Worse — UDP drops cascade |
+| DPI resistance in TR | High — looks like normal HTTPS | Low — UDP 443 throttled |
+| Latency | 2–3 RTT | 0–1 RTT |
+| Discord stability | Better | Worse (UDP drops cascade) |
 
-**Default is HTTP/2** because in DPI-aggressive networks it survives ISP
-shaping better and Discord-style long-lived TCP connections are more stable.
-Pick HTTP/3 from the menu if you want raw speed on a clean line.
+**Default is HTTP/2** — survives Turkish ISP shaping better.
 
 ---
 
-## Caveats / known footguns
+## GoodByDPI blacklist integration
 
-- **Full tunnel architecture**: all your traffic goes through Cloudflare
-  while WARP is on. Anthropic / OpenAI / GitHub sometimes flag Cloudflare
-  WARP exit IPs (rate-limit, captcha). If that bothers you, toggle off
-  while using those services or migrate to a SOCKS5 setup (out of scope
-  for this repo).
-- **Discord persistence**: closing WARP kills the active TCP socket to
-  `discord.com` because its source IP is tun0's — Discord has to
-  reconnect, and the bare reconnect gets DPI-blocked. Keep WARP on while
-  using Discord, or use a local DPI bypass (zapret, byedpi) instead.
-- **`config.json` is your WARP identity**: lose it and the bandwidth/quota
-  on that anonymous WARP+ device is gone. The installer leaves it in
-  `~/config.json`; copy it to a USB or cloud once.
-- **Tested only on Cachy/Arch + Hyprland**. Other distros / WMs will need
-  the autostart step done by hand.
+Copy any domain list (one domain per line, `*.example.com` wildcards stripped automatically) to `~/.config/warp-blacklist.txt`. The tray's **Blacklist → DNS yenile** applies it live.
+
+```bash
+# Example: import from GoodByDPI's blacklist.txt
+cp /path/to/blacklist.txt ~/.config/warp-blacklist.txt
+# Then: tray → Blacklist → DNS yenile
+```
 
 ---
 
 ## Uninstall
 
 ```bash
-sudo rm /usr/local/bin/warp-on /usr/local/bin/warp-off /etc/sudoers.d/warp
-rm ~/.local/bin/warp-tray
-# Remove the warp-tray line from ~/.config/hypr/custom/execs.lua manually.
-sudo pkill -9 -x usque
-sudo ip link del tun0 2>/dev/null
+sudo warp-off 2>/dev/null || true
+sudo rm /usr/local/bin/warp-on /usr/local/bin/warp-off \
+        /usr/local/bin/warp-bypass-reload /usr/local/bin/warp-dnsmasq-gen \
+        /usr/local/bin/warp-dns-reload /etc/sudoers.d/warp /etc/dnsmasq-warp.conf
+rm ~/.local/bin/warp-tray ~/.local/bin/discord
+# Remove warp-tray line from ~/.config/hypr/custom/execs.lua manually.
 ```
 
-`~/config.json` left alone — delete only if you're sure you don't want
-that WARP identity back.
+`~/config.json` is left alone — delete only if you're sure you don't need that WARP identity.
+
+---
+
+## Why MASQUE instead of WireGuard WARP
+
+Stock Cloudflare WARP (`warp-cli`) uses WireGuard. In Turkey (and other DPI-aggressive regions) WireGuard gets throttled, and the official client can be brittle on Linux.
+
+`usque` uses Cloudflare's **MASQUE-over-HTTP/2 or HTTP/3** — traffic indistinguishable from normal HTTPS. Lighter DPI footprint, no `warp-svc` daemon, runs as your user.
 
 ---
 

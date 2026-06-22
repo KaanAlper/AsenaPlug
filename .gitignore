@@ -12,3 +12,6 @@ usque.log
 .vscode/
 __pycache__/
 *.pyc
+
+# superpowers plugin scaffolding
+docs/superpowers/
