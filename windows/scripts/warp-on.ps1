@@ -7,7 +7,14 @@
     transport: http2 | http3
     scope:     selective (fiziksel default, sadece blacklist /32 -> TUN)
                full      (split-default -> TUN, endpoint fiziksel'de pinli)
+
+    -Transport / -Scope CLI argümanı verilirse desired.json'ı GEÇERSİZ KILAR
+    (tray bunları doğrudan geçer — dosya round-trip'ine güvenmeyen güvenilir yol).
 #>
+param(
+    [ValidateSet("", "http2", "http3")][string]$Transport = "",
+    [ValidateSet("", "selective", "full")][string]$Scope = ""
+)
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "Stop"
 
@@ -51,9 +58,12 @@ if (Test-Path $DesiredFile) {
         if ($d.scope)     { $scope     = "$($d.scope)" }
     } catch { Write-Log "desired.json okunamadı, varsayılan kullanılıyor: $_" }
 }
+# CLI argümanları (tray'den) desired.json'ı geçersiz kılar — öncelikli
+if ($Transport) { $transport = $Transport }
+if ($Scope)     { $scope     = $Scope }
 if ($transport -notin @("http2","http3")) { $transport = "http2" }
 if ($scope     -notin @("selective","full")) { $scope = "selective" }
-Write-Log "warp-on: transport=$transport scope=$scope"
+Write-Log "warp-on: transport=$transport scope=$scope (arg: '$Transport'/'$Scope')"
 
 # --- 1. usque başlat ---
 $usque = Get-Process -Name "usque" -ErrorAction SilentlyContinue

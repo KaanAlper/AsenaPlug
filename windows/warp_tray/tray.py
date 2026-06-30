@@ -65,6 +65,7 @@ class WarpTray:
         self._sel_transport = d["transport"]
         self._sel_scope = d["scope"]
         self._last_state: dict | None = None
+        self._pending: tuple[str, str] | None = None
         self._initialized = False
 
         self.tray = QSystemTrayIcon()
@@ -180,17 +181,22 @@ class WarpTray:
 
     # ------------------------------------------------------------------ control
     def set_target(self, transport: str, scope: str):
-        """İstenen moda geç (koşul-bazlı; sihirli gecikme yok)."""
-        state.write_desired(transport, scope)
+        """İstenen moda geç. transport/scope warp-on'a ARGÜMAN olarak geçer
+        (desired.json round-trip'ine güvenmez). Ayar-değişimi bildirimi YOK;
+        sadece refresh() gerçek connect/disconnect'i bildirir."""
+        state.write_desired(transport, scope)          # kalıcılık (boot/route-sync)
+        self._pending = (transport, scope)
         cur = state.current_state()
         if cur is None:
-            win.run_script("warp-on.ps1")
-            self._watch(lambda: state.current_state() is not None)
+            self._start(transport, scope)
         elif (cur["transport"], cur["scope"]) != (transport, scope):
-            # Mod değişimi: önce kapat, kapandığını gör, sonra aç
+            # Mod değişimi: önce kapat, kapandığını gör, sonra hedefle aç
             win.run_script("warp-off.ps1")
             self._after_off_then_on()
-        win.notify("WARP", f"{_T_LABEL[transport]} · {_S_LABEL[scope]} açılıyor…")
+
+    def _start(self, transport: str, scope: str):
+        win.run_script("warp-on.ps1", args=["-Transport", transport, "-Scope", scope])
+        self._watch(lambda: state.current_state() is not None)
 
     def disconnect(self):
         win.run_script("warp-off.ps1")
@@ -198,8 +204,8 @@ class WarpTray:
 
     def _after_off_then_on(self, attempts: int = 0):
         if state.current_state() is None:
-            win.run_script("warp-on.ps1")
-            self._watch(lambda: state.current_state() is not None)
+            t, s = self._pending or (self._sel_transport, self._sel_scope)
+            self._start(t, s)
         elif attempts < 25:
             QTimer.singleShot(400, lambda: self._after_off_then_on(attempts + 1))
         # değilse vazgeç; refresh gerçek durumu gösterir
