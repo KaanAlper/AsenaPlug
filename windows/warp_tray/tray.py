@@ -132,9 +132,10 @@ class WarpTray:
         self.menu.addMenu(self.blacklist_menu)
         self.menu.addSeparator()
 
-        quit_action = QAction("Çıkış")
-        quit_action.triggered.connect(self.app.quit)
-        self.menu.addAction(quit_action)
+        # parent=self.menu + self.* referansı: QAction GC'ye gidip menüden DÜŞMESİN
+        self.quit_action = QAction("Çıkış", self.menu)
+        self.quit_action.triggered.connect(self.app.quit)
+        self.menu.addAction(self.quit_action)
 
         self.tray.setContextMenu(self.menu)
         # Sadece UCUZ blacklist menüsü her açılışta yenilenir (powershell yok)
