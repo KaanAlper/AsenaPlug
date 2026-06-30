@@ -56,17 +56,19 @@ def read_state() -> dict | None:
 def current_state() -> dict | None:
     """WARP gerçekten açık mı? Açıksa {transport, scope}, değilse None.
 
-    Hem 'usque' adapteri ayakta olmalı (ctypes, anlık) hem state.json bulunmalı.
-    Adapter var ama state.json yoksa (tutarsız durum) varsayılanları döndürür.
+    state.json TEK doğru kaynaktır (warp-on adapter geldikten SONRA yazar,
+    warp-off siler). state.json yoksa -> bağlı değil (None). ÖNEMLİ: adapter
+    ayakta ama state.json yokken (off->on teardown anı) sahte 'http2' DÖNDÜRMEZ
+    — yoksa mod değişiminde tray kısa süre http2 gösterip yanıltıyordu.
     """
+    st = read_state()
+    if not st:
+        return None
     from . import win
     if not win.adapter_exists(TUN_NAME):
         return None
-    st = read_state()
-    if st:
-        t, s = _coerce(st.get("transport"), st.get("scope"))
-        return {"transport": t, "scope": s}
-    return {"transport": DEFAULT_TRANSPORT, "scope": DEFAULT_SCOPE}
+    t, s = _coerce(st.get("transport"), st.get("scope"))
+    return {"transport": t, "scope": s}
 
 
 # --- blacklist ---
