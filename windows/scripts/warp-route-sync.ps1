@@ -19,7 +19,11 @@ $BlacklistTxt  = Join-Path $ConfigDir "warp-blacklist.txt"
 $ResolvedFile  = Join-Path $RunDir "warp-resolved-ips.txt"
 $TunName       = "usque"
 $V6Rule        = "WarpTray-IPv6-FailClosed"
-$PruneAfter    = 3      # bir IP bu kadar döngü görünmezse route'u kaldır
+# CDN'ler (AWS/Cloudflare) her sorguda farklı IP döndürür. Agresif prune edersek
+# tarayıcının kullandığı IP düşüp kaynak yarım gelir. Yüksek tut -> IP'ler oturum
+# boyunca BİRİKİR, CDN havuzu zamanla tam kapsanır, set sabitlenir (churn durur).
+# (dns-reload / reconnect zaten sıfırdan kurar.)
+$PruneAfter    = 240    # ~1 saat (15sn x 240); pratikte oturum boyunca tutar
 $SleepSeconds  = 15
 # dnsproxy watchdog (selective modda sistem DNS 127.0.0.2'ye bağlı; dnsproxy
 # ölürse internet gider — ölmüşse yeniden başlat)
@@ -34,11 +38,19 @@ function Write-Log($msg) {
     Add-Content -Path $LogFile -Value "$ts  [route-sync] $msg" -Encoding UTF8 -ErrorAction SilentlyContinue
 }
 
-# Yeniden başlatmada mevcut route'larla senkron ol
+# Önbellekten son IP'leri yükle ve route'larını HEMEN ekle. İki sebep:
+#  1) Reconnect'te blacklist ANINDA çalışsın (resolve loop'unu beklemeden).
+#  2) Bug fix: route'lar warp-off'ta uçar; eskiden $routed'ı diskten yükleyip
+#     "zaten var" diye atlıyorduk -> reconnect'te route'lar HİÇ eklenmiyordu.
 $routed = @{}
-if (Test-Path $ResolvedFile) {
+$tunIdxInit = (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue).ifIndex
+if ((Test-Path $ResolvedFile) -and $tunIdxInit) {
     Get-Content $ResolvedFile | ForEach-Object {
-        $ip = $_.Trim(); if ($ip) { $routed[$ip] = $true }
+        $ip = $_.Trim()
+        if ($ip) {
+            & route -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdxInit 2>$null | Out-Null
+            $routed[$ip] = $true
+        }
     }
 }
 $miss = @{}
@@ -110,29 +122,29 @@ while ($true) {
         }
     }
 
-    # --- IPv4: ekle ---
+    # TUN interface index (route.exe için). route.exe, New-NetRoute (CIM) cmdlet'inden
+    # ~10-50x hızlı -> 250 route ~15sn yerine ~1-2sn'de eklenir (siteler hızlı açılır).
+    $tunIdx = (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue).ifIndex
+
+    # --- IPv4: ekle (route.exe, hızlı) ---
     $added = 0
     foreach ($ip in $desiredV4.Keys) {
         $miss.Remove($ip) | Out-Null
         if (-not $routed.ContainsKey($ip)) {
-            $exists = Get-NetRoute -DestinationPrefix "$ip/32" -InterfaceAlias $TunName -ErrorAction SilentlyContinue
-            if (-not $exists) {
-                New-NetRoute -DestinationPrefix "$ip/32" -InterfaceAlias $TunName -RouteMetric 1 -ErrorAction SilentlyContinue | Out-Null
-            }
+            & route -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdx 2>$null | Out-Null
             $routed[$ip] = $true
             $added++
         }
     }
 
-    # --- IPv4: kalıcı kaybolanı prune et ---
+    # --- IPv4: kalıcı kaybolanı prune et (route.exe delete) ---
     $removed = 0
     foreach ($ip in @($routed.Keys)) {
         if (-not $desiredV4.ContainsKey($ip)) {
             $m = 0; if ($miss.ContainsKey($ip)) { $m = $miss[$ip] }
             $m++
             if ($m -ge $PruneAfter) {
-                Get-NetRoute -DestinationPrefix "$ip/32" -InterfaceAlias $TunName -ErrorAction SilentlyContinue |
-                    Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+                & route -4 delete $ip 2>$null | Out-Null
                 $routed.Remove($ip) | Out-Null
                 $miss.Remove($ip) | Out-Null
                 $removed++
