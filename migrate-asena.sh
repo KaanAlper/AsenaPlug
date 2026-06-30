@@ -7,7 +7,9 @@ cd "$(dirname "$(readlink -f "$0")")"
 
 echo ":: 1/5  Eski warp durduruluyor…"
 sudo /usr/local/bin/warp-off 2>/dev/null || true
-pkill -f warp-tray 2>/dev/null || true
+# DİKKAT: 'pkill -f warp-tray' bu scriptin kendi yolunu (warp-tray-setup/...) de
+# eşleştirip kendini öldürür. Sadece kurulu tray binary'sini hedefle:
+pkill -f 'bin/warp-tray' 2>/dev/null || true
 
 echo ":: 2/5  Ayar taşınıyor (blacklist + route; kimlik ~/config.json zaten ortak)…"
 [ -f "$HOME/.config/warp-blacklist.txt" ] && cp -n "$HOME/.config/warp-blacklist.txt" "$HOME/.config/asena-blacklist.txt" && echo "   blacklist taşındı"
