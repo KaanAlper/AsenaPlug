@@ -32,6 +32,7 @@ $ListenDns     = "127.0.0.2"
 $UpstreamDns1  = "1.1.1.1:53"
 $UpstreamDns2  = "1.0.0.1:53"
 $Resolvers     = @("1.1.1.1", "1.0.0.1")
+$RouteExe      = Join-Path $env:SystemRoot "System32\route.exe"   # Windows yerleşik
 
 function Write-Log($msg) {
     $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
@@ -48,7 +49,7 @@ if ((Test-Path $ResolvedFile) -and $tunIdxInit) {
     Get-Content $ResolvedFile | ForEach-Object {
         $ip = $_.Trim()
         if ($ip) {
-            & route -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdxInit 2>$null | Out-Null
+            & $RouteExe -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdxInit 2>$null | Out-Null
             $routed[$ip] = $true
         }
     }
@@ -131,7 +132,7 @@ while ($true) {
     foreach ($ip in $desiredV4.Keys) {
         $miss.Remove($ip) | Out-Null
         if (-not $routed.ContainsKey($ip)) {
-            & route -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdx 2>$null | Out-Null
+            & $RouteExe -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdx 2>$null | Out-Null
             $routed[$ip] = $true
             $added++
         }
@@ -144,7 +145,7 @@ while ($true) {
             $m = 0; if ($miss.ContainsKey($ip)) { $m = $miss[$ip] }
             $m++
             if ($m -ge $PruneAfter) {
-                & route -4 delete $ip 2>$null | Out-Null
+                & $RouteExe -4 delete $ip 2>$null | Out-Null
                 $routed.Remove($ip) | Out-Null
                 $miss.Remove($ip) | Out-Null
                 $removed++
