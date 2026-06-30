@@ -38,6 +38,10 @@ try {
         if (-not (Test-Path $f)) { throw "Eksik bundle dosyası: $f" }
     }
     if (-not (Test-Path "requirements.txt")) { throw "requirements.txt yok." }
+    # İkon MUTLAK yolla verilir (PyInstaller CWD'si farklı olursa sessizce atlamasın)
+    $IconPath = Join-Path $PSScriptRoot "assets\AsenaPlug.ico"
+    if (-not (Test-Path $IconPath)) { throw "İkon yok: $IconPath" }
+    Write-Host "İkon: $IconPath" -ForegroundColor Cyan
 
     # --- Uygun CPython seç (PyPy DEĞİL) ---
     $candidates = @()
@@ -69,7 +73,7 @@ try {
     Write-Host "PyInstaller çalışıyor..." -ForegroundColor Cyan
     & $pyExe @pyPre -m PyInstaller --noconfirm --clean --onefile --windowed `
         --name AsenaPlug `
-        --icon "assets\AsenaPlug.ico" `
+        --icon "$IconPath" `
         --paths . `
         --add-data "bundled;bundled" `
         --add-data "scripts;scripts" `
