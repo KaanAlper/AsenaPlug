@@ -86,9 +86,15 @@ class WarpTray:
     def _build_menu(self):
         self.menu = QMenu()
 
-        self.disconnect_action = QAction("Disconnect")
-        self.disconnect_action.triggered.connect(self.disconnect)
-        self.menu.addAction(self.disconnect_action)
+        # Connect/Disconnect — duruma göre metni değişen, HER ZAMAN tıklanabilir
+        self.toggle_action = QAction("Connect")
+        self.toggle_action.triggered.connect(self.toggle)
+        self.menu.addAction(self.toggle_action)
+
+        # Durum satırı (bilgi amaçlı, tıklanamaz)
+        self.status_action = QAction("Durum: Bağlı değil")
+        self.status_action.setEnabled(False)
+        self.menu.addAction(self.status_action)
         self.menu.addSeparator()
 
         # Transport grubu
@@ -148,12 +154,16 @@ class WarpTray:
         self.blacklist_menu.addAction("DNS yenile").triggered.connect(self.reload_dns)
 
     # ------------------------------------------------------------------ events
+    def toggle(self):
+        """Bağlı değilse bağlan (seçili mod), bağlıysa kes."""
+        if state.current_state() is None:
+            self.set_target(self._sel_transport, self._sel_scope)
+        else:
+            self.disconnect()
+
     def _on_click(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            if state.current_state() is None:
-                self.set_target(self._sel_transport, self._sel_scope)
-            else:
-                self.disconnect()
+            self.toggle()
 
     def choose_transport(self, t: str):
         self._sel_transport = t
@@ -232,12 +242,14 @@ class WarpTray:
         self.tray.setIcon(self.icon_on if active else self.icon_off)
 
         if active:
-            self.tray.setToolTip(
-                f"WARP: Connected ({_T_LABEL[st['transport']]} · {_S_LABEL[st['scope']]})"
-            )
+            detail = f"{_T_LABEL[st['transport']]} · {_S_LABEL[st['scope']]}"
+            self.tray.setToolTip(f"WARP: Connected ({detail})")
+            self.toggle_action.setText("Disconnect")
+            self.status_action.setText(f"Durum: Bağlı — {detail}")
         else:
             self.tray.setToolTip("WARP: Disconnected")
-        self.disconnect_action.setEnabled(active)
+            self.toggle_action.setText("Connect")
+            self.status_action.setText("Durum: Bağlı değil")
 
         # Checkmark: bağlıysa gerçek durum, değilse seçili istek
         shown_t = st["transport"] if active else self._sel_transport
