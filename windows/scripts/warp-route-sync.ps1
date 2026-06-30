@@ -38,11 +38,19 @@ function Write-Log($msg) {
     Add-Content -Path $LogFile -Value "$ts  [route-sync] $msg" -Encoding UTF8 -ErrorAction SilentlyContinue
 }
 
-# Yeniden başlatmada mevcut route'larla senkron ol
+# Önbellekten son IP'leri yükle ve route'larını HEMEN ekle. İki sebep:
+#  1) Reconnect'te blacklist ANINDA çalışsın (resolve loop'unu beklemeden).
+#  2) Bug fix: route'lar warp-off'ta uçar; eskiden $routed'ı diskten yükleyip
+#     "zaten var" diye atlıyorduk -> reconnect'te route'lar HİÇ eklenmiyordu.
 $routed = @{}
-if (Test-Path $ResolvedFile) {
+$tunIdxInit = (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue).ifIndex
+if ((Test-Path $ResolvedFile) -and $tunIdxInit) {
     Get-Content $ResolvedFile | ForEach-Object {
-        $ip = $_.Trim(); if ($ip) { $routed[$ip] = $true }
+        $ip = $_.Trim()
+        if ($ip) {
+            & route -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdxInit 2>$null | Out-Null
+            $routed[$ip] = $true
+        }
     }
 }
 $miss = @{}
