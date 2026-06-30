@@ -45,6 +45,28 @@ def needs_setup() -> bool:
     return not SETUP_FLAG.exists()
 
 
+def refresh_scripts():
+    """Her açılışta scriptleri bundle'dan TEKRAR kopyala — Program Files'taki
+    scriptler her zaman çalışan kod ile senkron kalsın. (Kurulum bir kez çalıştığı
+    için yoksa eski scriptler kalır → seçimler işlenmez.) Eksik binary'leri de
+    tamamlar. Elevated gerektirir; değilse sessizce atlar."""
+    try:
+        SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+        for ps in SCRIPT_NAMES:
+            src = bundle_path(f"scripts/{ps}")
+            if src.exists():
+                shutil.copy2(src, SCRIPTS_DIR / ps)
+        for fname, dst in (("usque.exe", USQUE_EXE),
+                           ("wintun.dll", WINTUN_DLL),
+                           ("dnsproxy.exe", DNSPROXY_EXE)):
+            if not dst.exists():
+                src = bundle_path(f"bundled/{fname}")
+                if src.exists():
+                    shutil.copy2(src, dst)
+    except Exception as e:
+        log(f"refresh_scripts atlandı (admin gerekebilir): {e}")
+
+
 def run_setup():
     """Admin gerektirir. Tüm kurulum adımlarını sırayla yapar."""
     # 1. Dizinler

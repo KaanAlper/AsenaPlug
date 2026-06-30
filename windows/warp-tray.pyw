@@ -42,6 +42,9 @@ def main():
         except Exception as e:
             _msgbox_error(str(e))
             sys.exit(1)
+    else:
+        # Kurulu ama scriptler kod ile senkron olsun (kurulum bir kez çalışır)
+        install.refresh_scripts()
     WarpTray().run()
 
 
