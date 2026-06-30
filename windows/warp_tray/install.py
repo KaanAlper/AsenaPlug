@@ -161,6 +161,24 @@ def _create_desktop_shortcut():
         log(f"kısayol oluşturulamadı: {e}")
 
 
+def running_from_install() -> bool:
+    """Çalışan süreç zaten Program Files'taki kurulu exe mi? (dev/.pyw -> True)."""
+    if not getattr(sys, "frozen", False):
+        return True
+    try:
+        return Path(sys.executable).resolve() == APP_EXE.resolve()
+    except Exception:
+        return True
+
+
+def launch_installed():
+    """dist'ten çalışıyorsak Program Files'taki kurulu exe'ye devret (aktif o olsun)."""
+    try:
+        subprocess.Popen([str(APP_EXE)])
+    except Exception as e:
+        log(f"kurulu exe başlatılamadı: {e}")
+
+
 def _tray_launch():
     """(Execute, Argument) — frozen ise Program Files'taki kurulu exe; değilse pythonw + .pyw."""
     if getattr(sys, "frozen", False):

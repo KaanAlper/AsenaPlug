@@ -44,6 +44,11 @@ if (Test-Path $ResolvedFile) {
 $miss = @{}
 $lastV6Key = ""
 
+# .NET async DNS aslında thread havuzunda bloklayan iş; havuz yavaş büyür (~1/sn)
+# -> 324 "async" sorgu sıraya girip ilk doldurma ~30sn sürüyordu. Havuzu baştan
+# büyüt -> sorgular GERÇEKTEN eşzamanlı -> ilk doldurma birkaç saniye.
+[System.Threading.ThreadPool]::SetMinThreads(256, 256) | Out-Null
+
 Write-Log "başladı."
 
 while ($true) {

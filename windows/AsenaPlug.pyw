@@ -28,13 +28,9 @@ def main():
     if not win.is_admin():
         win.relaunch_as_admin()  # UAC; yükseltilmiş kopya devam eder, bu süreç biter
 
-    # Aynı anda tek tray (logon görevi + elle açış iki tray açmasın)
-    if not win.acquire_single_instance():
-        sys.exit(0)
-
     if install.needs_setup():
         try:
-            install.run_setup()
+            install.run_setup()  # exe'yi Program Files'a kopyalar, görevler, vb.
         except Exception as e:
             _msgbox_error(str(e))
             sys.exit(1)
@@ -42,6 +38,16 @@ def main():
         # Kurulu: scriptleri kod ile senkronla + güncel exe'yi Program Files'a kopyala
         install.refresh_scripts()
         install.install_self()
+
+    # dist'ten çalışıyorsak Program Files'taki kurulu kopyaya DEVRET (aktif o olsun);
+    # mutex'i tutmadan devret ki yeni süreç alabilsin.
+    if not install.running_from_install() and install.APP_EXE.exists():
+        install.launch_installed()
+        sys.exit(0)
+
+    # Aynı anda tek tray (logon görevi + elle açış iki tray açmasın)
+    if not win.acquire_single_instance():
+        sys.exit(0)
     WarpTray().run()
 
 
