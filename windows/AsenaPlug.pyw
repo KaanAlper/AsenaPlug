@@ -29,6 +29,10 @@ def _msgbox_error(text: str):
 
 
 def main():
+    # Aynı anda tek tray (logon görevi + elle açış iki tray açmasın)
+    if not win.acquire_single_instance():
+        sys.exit(0)
+
     if install.needs_setup():
         if not win.is_admin():
             if not _msgbox_question(
@@ -43,8 +47,9 @@ def main():
             _msgbox_error(str(e))
             sys.exit(1)
     else:
-        # Kurulu ama scriptler kod ile senkron olsun (kurulum bir kez çalışır)
+        # Kurulu: scriptleri kod ile senkronla + güncel exe'yi Program Files'a kopyala
         install.refresh_scripts()
+        install.install_self()
     WarpTray().run()
 
 

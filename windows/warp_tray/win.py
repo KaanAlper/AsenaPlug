@@ -25,6 +25,17 @@ def is_admin() -> bool:
         return False
 
 
+def acquire_single_instance(name: str = "AsenaPlug_SingleInstance") -> bool:
+    """Aynı anda tek tray çalışsın (logon görevi + elle açış çakışmasın).
+    Mutex bu process ömrü boyunca tutulur. Başka örnek varsa False döner."""
+    try:
+        ERROR_ALREADY_EXISTS = 183
+        ctypes.windll.kernel32.CreateMutexW(None, False, name)
+        return ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS
+    except Exception:
+        return True  # mutex kurulamadıysa engelleme
+
+
 def relaunch_as_admin():
     """UAC ile kendini yönetici olarak yeniden başlat."""
     params = " ".join(f'"{a}"' for a in sys.argv)

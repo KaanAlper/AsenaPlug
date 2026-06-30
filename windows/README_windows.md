@@ -39,6 +39,14 @@ cd windows
 .\dist\AsenaPlug.exe   # ilk çalıştırma: UAC -> kurulum -> tray
 ```
 
+İlk çalıştırmada exe **kendini `C:\Program Files\usque\AsenaPlug.exe`'ye kopyalar**,
+**masaüstüne kısayol** yapar ve logon'da oradan otomatik başlar — yani `dist\`'i
+silebilirsin. Aynı anda tek tray çalışır (logon + elle açış çakışmaz).
+
+> **Güncelleme:** yeni build aldıktan sonra çalışan tray'i **Çıkış**'tan kapat, sonra
+> yeni `dist\AsenaPlug.exe`'yi (yönetici) çalıştır → kendini Program Files'a kopyalar.
+> Ayarların/blacklist/kimliğin **korunur** (kurulum bir kez çalışır; sadece kod tazelenir).
+
 **Seçenek B — kaynaktan (geliştirme):**
 
 ```powershell
