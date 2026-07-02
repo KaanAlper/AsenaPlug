@@ -1158,40 +1158,49 @@ EOF
     chown "$TARGET_USER:$TARGET_USER" "$ROUTE_CONF"
 fi
 
-#=== Hyprland autostart ========================================================
+#=== Autostart ================================================================
 HYPR_LUA="$TARGET_HOME/.config/hypr/custom/execs.lua"
 HYPR_CONF="$TARGET_HOME/.config/hypr/hyprland.conf"
 AUTOSTART_LINE='hl.exec_cmd("sleep 4 && $HOME/.local/bin/asena-tray")'
 CONF_LINE='exec-once = sleep 4 && $HOME/.local/bin/asena-tray'
 
-if [ -f "$HYPR_LUA" ]; then
-    say "Adding autostart to $HYPR_LUA…"
-    if ! grep -q 'asena-tray' "$HYPR_LUA"; then
-        if grep -q 'hl.on("hyprland.start"' "$HYPR_LUA"; then
-            warn "Existing hl.on block — add manually inside it: $AUTOSTART_LINE"
-        else
-            cat >> "$HYPR_LUA" << EOF
+# Migration: eski 'warp-tray' autostart satırını 'asena-tray'e çevir (silinen binary'yi çağırmasın)
+for f in "$HYPR_LUA" "$HYPR_CONF"; do
+    [ -f "$f" ] && sed -i 's#\.local/bin/warp-tray#.local/bin/asena-tray#g' "$f"
+done
 
-hl.on("hyprland.start", function ()
-    -- Asena tray indicator (delay so Quickshell SNI host is up)
-    $AUTOSTART_LINE
-end)
-EOF
-        fi
+if [ -f "$HYPR_LUA" ]; then
+    if grep -q 'asena-tray' "$HYPR_LUA"; then
+        say "asena-tray autostart zaten var (execs.lua)."
     else
-        say "asena-tray already in execs.lua, skipping."
+        printf '\n-- Asena tray indicator (SNI host hazır olsun diye gecikme)\n%s\n' "$AUTOSTART_LINE" >> "$HYPR_LUA"
+        say "asena-tray autostart eklendi (execs.lua)."
     fi
     chown "$TARGET_USER:$TARGET_USER" "$HYPR_LUA"
 elif [ -f "$HYPR_CONF" ]; then
-    say "Adding autostart to $HYPR_CONF…"
-    if ! grep -q 'asena-tray' "$HYPR_CONF"; then
-        printf '\n# Asena tray indicator\n%s\n' "$CONF_LINE" >> "$HYPR_CONF"
-        chown "$TARGET_USER:$TARGET_USER" "$HYPR_CONF"
+    if grep -q 'asena-tray' "$HYPR_CONF"; then
+        say "asena-tray autostart zaten var (hyprland.conf)."
     else
-        say "asena-tray already in hyprland.conf, skipping."
+        printf '\n# Asena tray indicator\n%s\n' "$CONF_LINE" >> "$HYPR_CONF"
+        say "asena-tray autostart eklendi (hyprland.conf)."
     fi
+    chown "$TARGET_USER:$TARGET_USER" "$HYPR_CONF"
 else
-    warn "No Hyprland config found — add manually: $CONF_LINE"
+    # Hyprland yok -> universal XDG autostart (GNOME/KDE/XFCE...)
+    ASDIR="$TARGET_HOME/.config/autostart"
+    mkdir -p "$ASDIR"
+    cat > "$ASDIR/asena-tray.desktop" << DESK
+[Desktop Entry]
+Type=Application
+Name=AsenaPlug
+Comment=DPI/DNS bypass tray
+Exec=sh -c "sleep 4 && \$HOME/.local/bin/asena-tray"
+Icon=$TARGET_HOME/.local/share/asena/asena.png
+Terminal=false
+X-GNOME-Autostart-enabled=true
+DESK
+    chown -R "$TARGET_USER:$TARGET_USER" "$ASDIR"
+    say "XDG autostart eklendi (Hyprland bulunamadı)."
 fi
 
 #=== usque register ============================================================
