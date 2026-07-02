@@ -423,6 +423,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QInputDialog,
@@ -674,6 +675,15 @@ class AsenaTray:
 
         self.app = QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)
+
+        # Tray host (SNI/StatusNotifierWatcher) hazır olana dek bekle: host gelir
+        # gelmez kaydol -> hem fallback pencere olmaz hem daha erken register olup
+        # tepside daha iyi (taşmayan) bir sıra kapar. En fazla ~15sn.
+        for _ in range(60):
+            if QSystemTrayIcon.isSystemTrayAvailable():
+                break
+            self.app.processEvents()
+            time.sleep(0.25)
 
         self.icon_on = make_icon(True)
         self.icon_off = make_icon(False)
@@ -1161,8 +1171,8 @@ fi
 #=== Autostart ================================================================
 HYPR_LUA="$TARGET_HOME/.config/hypr/custom/execs.lua"
 HYPR_CONF="$TARGET_HOME/.config/hypr/hyprland.conf"
-AUTOSTART_LINE='hl.exec_cmd("sleep 4 && $HOME/.local/bin/asena-tray")'
-CONF_LINE='exec-once = sleep 4 && $HOME/.local/bin/asena-tray'
+AUTOSTART_LINE='hl.exec_cmd("sleep 1 && $HOME/.local/bin/asena-tray")'
+CONF_LINE='exec-once = sleep 1 && $HOME/.local/bin/asena-tray'
 
 # Migration: eski 'warp-tray' autostart satırını 'asena-tray'e çevir (silinen binary'yi çağırmasın)
 for f in "$HYPR_LUA" "$HYPR_CONF"; do
