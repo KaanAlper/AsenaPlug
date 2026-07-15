@@ -1,0 +1,54 @@
+name: Build & Release Windows EXE
+
+# Her main push'unda: sürümü otomatik artır (1.0.<build#>), exe'yi PyInstaller ile
+# build et (auto-py-to-exe GEREKMEZ — altta zaten PyInstaller var), v1.0.<build#>
+# tag'li release oluştur ve AsenaPlug.exe'yi asset olarak yükle. Kullanıcı hiç
+# build almaz / tag atmaz; çalışan uygulamalar bu release'i görüp kendini günceller.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "windows/**"          # sadece Windows kodu değişince release (gereksiz build yok)
+  workflow_dispatch:           # GitHub UI'dan "Run workflow" ile manuel de tetiklenir
+
+permissions:
+  contents: write              # release + tag oluşturmak için
+
+concurrency:                   # üst üste push'larda yalnız en sonu yayınla
+  group: release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sürümü ayarla (1.0.<run_number>)
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "1.0.${{ github.run_number }}"
+          $p = "windows/asenaplug/paths.py"
+          (Get-Content $p) -replace 'APP_VERSION = "[^"]*"', "APP_VERSION = `"$v`"" | Set-Content $p
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "APP_VERSION -> $v"
+
+      - name: EXE build (PyInstaller / build.ps1)
+        shell: pwsh
+        run: |
+          cd windows
+          .\build.ps1
+
+      - name: Release oluştur + exe yükle
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: AsenaPlug v${{ steps.ver.outputs.version }}
+          files: windows/dist/AsenaPlug.exe
+          generate_release_notes: true
+          make_latest: "true"

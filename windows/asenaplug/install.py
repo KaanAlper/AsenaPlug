@@ -143,10 +143,26 @@ def install_self():
         src = Path(sys.executable)
         if src.resolve() != APP_EXE.resolve():
             INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, APP_EXE)
+            _copy_with_retry(src, APP_EXE)
     except Exception as e:
         log(f"exe Program Files'a kopyalanamadı (çalışan örnek olabilir): {e}")
     _create_desktop_shortcut()
+
+
+def _copy_with_retry(src: Path, dst: Path, attempts: int = 20, delay: float = 0.5):
+    """Güncellemede Program Files exe'yi çalışan (eski) tray kilitler. Yeni exe
+    kopyayı, eski tray kapanıp kilit kalkana dek (~10sn) birkaç kez dener."""
+    import time
+    last = None
+    for _ in range(attempts):
+        try:
+            shutil.copy2(src, dst)
+            return
+        except (PermissionError, OSError) as e:
+            last = e
+            time.sleep(delay)
+    if last:
+        raise last
 
 
 def _create_desktop_shortcut():

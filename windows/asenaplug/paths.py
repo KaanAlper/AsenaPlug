@@ -34,6 +34,10 @@ TUN_NAME = "usque"
 # (usque yolları, AsenaPlug_* görevleri, asenaplug paketi) aynı kalır.
 APP_NAME = "AsenaPlug"
 
+# Sürüm — GitHub release tag'i (vX.Y.Z) ile karşılaştırılır. Her release'de artır.
+APP_VERSION = "1.0.0"
+GITHUB_REPO = "KaanAlper/AsenaPlug"
+
 # --- Varsayılan mod ---
 DEFAULT_TRANSPORT = "http2"      # DPI-stealth; TR'de dayanıklı
 DEFAULT_SCOPE     = "selective"  # fiziksel default, sadece blacklist Asena'tan

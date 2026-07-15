@@ -15,7 +15,7 @@ from PySide6.QtCore import QLocale, QRect, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QSystemTrayIcon
 
-from . import i18n, state, win
+from . import i18n, state, update, win
 from .i18n import t
 from .paths import BLACKLIST_PATH, APP_NAME
 
@@ -151,6 +151,10 @@ class AsenaTray:
 
         self.app.aboutToQuit.connect(self.emergency_cleanup)
 
+        # Açılışta sessiz güncelleme denetimi (sadece kurulu exe; günde 1 kez)
+        if getattr(sys, "frozen", False) and update.auto_due():
+            QTimer.singleShot(4000, lambda: self.check_for_updates(silent=True))
+
     # ------------------------------------------------------------------ menu
     def _build_menu(self):
         self.menu = QMenu()
@@ -198,6 +202,12 @@ class AsenaTray:
 
         self.blacklist_menu = QMenu(t("blacklist_menu"))
         self.menu.addMenu(self.blacklist_menu)
+        self.menu.addSeparator()
+
+        # Güncellemeleri denetle (GitHub release)
+        self.update_action = QAction(t("check_updates"), self.menu)
+        self.update_action.triggered.connect(lambda: self.check_for_updates(silent=False))
+        self.menu.addAction(self.update_action)
         self.menu.addSeparator()
 
         # Dil alt menüsü (çıkışın hemen üstünde) — üzerine gelince diller açılır
@@ -258,6 +268,63 @@ class AsenaTray:
         i18n.save(code)
         self._build_menu()   # setContextMenu + tüm etiketleri yeniden üretir
         self.refresh()       # ikon/tooltip/durum satırını yeni dille güncelle
+
+    # ------------------------------------------------------------------ update
+    def check_for_updates(self, silent: bool = False):
+        """GitHub release'i arka planda denetle. silent=True: açılıştaki otomatik
+        denetim (sonuç yoksa sessiz); False: menüden manuel (her sonucu bildir)."""
+        self._upd_silent = silent
+        if not silent:
+            win.notify(APP_NAME, t("upd_checking"))
+        update.mark_checked()
+        self._checker = update.Checker()          # self ref: sinyal boyunca yaşasın
+        self._checker.result.connect(self._on_update_result)
+        self._checker.start()
+
+    def _on_update_result(self, res):
+        if res is None:
+            if not self._upd_silent:
+                win.notify(APP_NAME, t("upd_none"))
+            return
+        tag, url, notes = res
+        from PySide6.QtWidgets import QMessageBox
+        text = t("upd_available", ver=tag)
+        if notes:
+            text += "\n\n" + notes[:500]
+        box = QMessageBox()
+        box.setWindowTitle(t("upd_available_title"))
+        box.setText(text)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if box.exec() == QMessageBox.StandardButton.Yes:
+            self._start_download(url)
+
+    def _start_download(self, url: str):
+        dest = update.UPDATE_DIR / f"{APP_NAME}.exe"
+        self._toast = update.UpdateToast(t("upd_toast_header"), t("upd_downloading"))
+        self._toast.show_bottom_right()
+        self._downloader = update.Downloader(url, dest)   # self ref: yaşasın
+        self._downloader.progress.connect(self._toast.set_pct)
+        self._downloader.finished.connect(self._on_download_done)
+        self._downloader.start()
+
+    def _on_download_done(self, ok: bool, dest: str):
+        if not ok:
+            if getattr(self, "_toast", None):
+                self._toast.close()
+            win.notify(APP_NAME, t("upd_fail"))
+            return
+        self._toast.set_pct(100)
+        self._toast.set_sub(t("upd_installing"))
+        # Yeni exe'yi başlat: install_self() onu Program Files'a kopyalar (bu tray
+        # kapanınca kilit kalkar; install_self retry ile bekler). Sonra bu tray'i kapat.
+        import subprocess
+        try:
+            subprocess.Popen([dest])
+        except Exception:
+            win.notify(APP_NAME, t("upd_fail"))
+            return
+        QTimer.singleShot(1500, self.app.quit)
 
     def _connected_or_connecting(self) -> bool:
         """Bağlı, VEYA bağlanmaya çalışıyor (reconcile bir connect hedefine gidiyor).
