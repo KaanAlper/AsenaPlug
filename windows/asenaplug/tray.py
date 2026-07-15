@@ -9,17 +9,31 @@ Mod geçişleri sihirli singleShot gecikmeleri yerine KOŞUL-BAZLI poll ile yap�
 """
 import os
 import sys
+import threading
 from pathlib import Path
 
-from PySide6.QtCore import QLocale, QRect, Qt, QTimer
+from PySide6.QtCore import QLocale, QObject, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QSystemTrayIcon
 
-from . import i18n, state, update, win
+from . import endpoint, i18n, install, state, update, win
 from .i18n import t
-from .paths import BLACKLIST_PATH, APP_NAME
+from .paths import BLACKLIST_PATH, CONFIG_JSON, LOG_FILE, APP_NAME
 
 TRAY_REF = None  # win.notify fallback'ı için
+
+
+def _log_tail(limit: int = 160) -> str:
+    """usque.log'un son boş-olmayan satırı (teşhis için timeout bildirimine eklenir).
+    Script'ler fire-and-forget koştuğu için hata mesajı başka türlü kullanıcıya
+    ulaşmıyordu; jenerik 'zaman aşımı' yerine gerçek sebebi gösterir."""
+    try:
+        for ln in reversed(LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()):
+            if ln.strip():
+                return ln.strip()[-limit:]
+    except OSError:
+        pass
+    return ""
 
 _T_LABEL = {"http2": "HTTP/2", "http3": "HTTP/3"}  # teknik etiket — çevrilmez
 
@@ -102,6 +116,36 @@ def _make_icon_fallback(connected: bool) -> QIcon:
     return QIcon(pixmap)
 
 
+class _EndpointWorker(QObject):
+    """endpoint.optimize()'ı arka planda koşar (bloklayan TCP taraması UI'yi
+    dondurmasın), sonucu Signal ile UI thread'ine verir."""
+    done = Signal(object)            # (ip, ms) | None
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        try:
+            self.done.emit(endpoint.optimize())
+        except Exception:
+            self.done.emit(None)
+
+
+class _NetWatchWorker(QObject):
+    """Fiziksel default gateway'i arka planda okur (powershell -> UI donmasın),
+    sonucu Signal ile UI thread'ine verir."""
+    done = Signal(object)            # gateway ip str | None
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        try:
+            self.done.emit(win.current_default_gateway())
+        except Exception:
+            self.done.emit(None)
+
+
 class AsenaTray:
     def __init__(self):
         global TRAY_REF
@@ -122,6 +166,7 @@ class AsenaTray:
         d = state.read_desired()
         self._sel_transport = d["transport"]
         self._sel_scope = d["scope"]
+        self._sel_killswitch = d["killswitch"]
         self._last_state: dict | None = None
         self._initialized = False
         # --- reconciler durumu (tek hedef, tek timer; thrashing yok) ---
@@ -129,6 +174,12 @@ class AsenaTray:
         self._issued = None      # bu hedef için komut verildi mi (issue-once)
         self._phase_ticks = 0
         self._reconciling = False
+        self._register_thread = None  # connect öncesi cihaz kaydı (arka plan)
+        self._updating = False        # güncelleme için çıkışta teardown'ı atla (tünel açık kalsın)
+        self._netwatch_worker = None  # ağ-değişimi izleyici (arka plan gateway kontrolü)
+        self._net_tick = 0
+        self._wd_wait = 1             # usque-watchdog: kaç tik sonra yeniden dene
+        self._wd_backoff = 1          # üstel geri çekilme (tik cinsinden, ~60s tavan)
 
         self.tray = QSystemTrayIcon()
         TRAY_REF = self.tray
@@ -209,6 +260,20 @@ class AsenaTray:
         self.menu.addMenu(self.blacklist_menu)
         self.menu.addSeparator()
 
+        # Kill-switch (opsiyonel; sadece full modda etkili): tünel düşerse trafiği kes
+        self.killswitch_action = QAction(t("killswitch"), self.menu)
+        self.killswitch_action.setCheckable(True)
+        self.killswitch_action.setChecked(self._sel_killswitch)
+        self.killswitch_action.triggered.connect(self.toggle_killswitch)
+        self.menu.addAction(self.killswitch_action)
+        self.menu.addSeparator()
+
+        # Bağlantıyı hızlandır: en yakın WARP endpoint'ini LOKAL ölç + uygula
+        self.speed_action = QAction(t("optimize_endpoint"), self.menu)
+        self.speed_action.triggered.connect(self.optimize_endpoint)
+        self.menu.addAction(self.speed_action)
+        self.menu.addSeparator()
+
         # Güncellemeleri denetle (GitHub release)
         self.update_action = QAction(t("check_updates"), self.menu)
         self.update_action.triggered.connect(lambda: self.check_for_updates(silent=False))
@@ -274,6 +339,27 @@ class AsenaTray:
         self._build_menu()   # setContextMenu + tüm etiketleri yeniden üretir
         self.refresh()       # ikon/tooltip/durum satırını yeni dille güncelle
 
+    # ------------------------------------------------------------ endpoint hızı
+    def optimize_endpoint(self):
+        """En yakın WARP endpoint'ini LOKAL ölç + config.json'a uygula. Ölçüm
+        arka planda; menü/UI donmaz. Etki bir sonraki bağlanışta görünür."""
+        if getattr(self, "_ep_worker", None) is not None:
+            return                                  # zaten sürüyor
+        win.notify(APP_NAME, t("opt_scanning"))
+        self._ep_worker = _EndpointWorker()         # self ref: sinyal boyunca yaşasın
+        self._ep_worker.done.connect(self._on_optimize_done)
+        self._ep_worker.start()
+
+    def _on_optimize_done(self, res):
+        self._ep_worker = None
+        if not res:
+            win.notify(APP_NAME, t("opt_fail"))
+            return
+        ip, ms = res
+        # Bağlıysak yeni endpoint ancak yeniden bağlanınca etkin olur — kullanıcıya söyle
+        key = "opt_done_reconnect" if state.current_state() is not None else "opt_done"
+        win.notify(APP_NAME, t(key, ip=ip, ms=int(ms)))
+
     # ------------------------------------------------------------------ update
     def check_for_updates(self, silent: bool = False):
         """GitHub release'i arka planda denetle. silent=True: açılıştaki otomatik
@@ -296,7 +382,7 @@ class AsenaTray:
             if not self._upd_silent:
                 win.notify(APP_NAME, t("upd_none"))
             return
-        tag, url, notes = res
+        tag, url, notes, sha_url = res
         from PySide6.QtWidgets import QMessageBox
         text = t("upd_available", ver=tag)
         if notes:
@@ -307,13 +393,13 @@ class AsenaTray:
         box.setIcon(QMessageBox.Icon.Information)
         box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if box.exec() == QMessageBox.StandardButton.Yes:
-            self._start_download(url)
+            self._start_download(url, sha_url)
 
-    def _start_download(self, url: str):
+    def _start_download(self, url: str, sha_url: str | None = None):
         dest = update.UPDATE_DIR / f"{APP_NAME}.exe"
         self._toast = update.UpdateToast(t("upd_toast_header"), t("upd_downloading"))
         self._toast.show_bottom_right()
-        self._downloader = update.Downloader(url, dest)   # self ref: yaşasın
+        self._downloader = update.Downloader(url, dest, sha_url)   # self ref: yaşasın
         self._downloader.progress.connect(self._toast.set_pct)
         self._downloader.finished.connect(self._on_download_done)
         self._downloader.start()
@@ -328,10 +414,15 @@ class AsenaTray:
         self._toast.set_sub(t("upd_installing"))
         # Yeni exe'yi başlat: install_self() onu Program Files'a kopyalar (bu tray
         # kapanınca kilit kalkar; install_self retry ile bekler). Sonra bu tray'i kapat.
+        # _updating: emergency_cleanup asena-off ETMESİN — tünel açık kalsın, yeni tray
+        # zaten çalışan tüneli görüp devam eder (gereksiz kesinti + teardown/copy yarışı
+        # yok; teardown 20sn sürüp kopyayı bloklayıp güncellemeyi sessizce iptal ettiriyordu).
+        self._updating = True
         import subprocess
         try:
             subprocess.Popen([dest])
         except Exception:
+            self._updating = False
             win.notify(APP_NAME, t("upd_fail"))
             return
         QTimer.singleShot(1500, self.app.quit)
@@ -356,6 +447,17 @@ class AsenaTray:
         self.rebuild_blacklist_menu()
         if self._connected_or_connecting():
             self.set_target(self._sel_transport, s)
+
+    def toggle_killswitch(self, checked: bool):
+        """Kill-switch tercihini KALICI kaydet. Yalnız full modda etkili (asena-on
+        desired.json'dan okur). Full modda BAĞLIYKEN açıp/kapatırsan firewall'u hemen
+        güncellemek için route'ları yeniden uygula; değilsen sonraki full connect'te
+        uygulanır."""
+        self._sel_killswitch = checked
+        state.write_desired(self._sel_transport, self._sel_scope, killswitch=checked)
+        cur = state.current_state()
+        if cur is not None and cur["scope"] == "full":
+            win.run_script("asena-on.ps1", args=["-Transport", cur["transport"], "-Scope", cur["scope"]])
 
     # ------------------------------------------------------------------ control
     # Reconciliation loop (Kubernetes controller / desired-vs-actual deseni):
@@ -391,30 +493,84 @@ class AsenaTray:
             self._reconcile()
 
     @staticmethod
-    def _decide(goal, cur):
+    def _watchdog_step(active, desired_connected, busy, wait, backoff, cap=20):
+        """usque-watchdog backoff kararı (SAF, test edilebilir).
+          active           — tünel gerçekten ayakta mı
+          desired_connected— kullanıcı bağlı OLMAK istiyor mu (desired.json)
+          busy             — reconcile/update/register sürüyor mu
+        Döner: (fire, new_wait, new_backoff). fire=True -> yeniden bağlan.
+        Bağlıysa ya da kullanıcı kapattıysa sıfırla; deneme sürüyorsa bekle; değilse
+        geri sayıp süresi dolunca ateşle ve backoff'u ikiye katla (tavan=cap tik)."""
+        if active or not desired_connected:
+            return False, 1, 1
+        if busy:
+            return False, wait, backoff
+        if wait > 0:
+            return False, wait - 1, backoff
+        new_backoff = min(backoff * 2, cap)
+        return True, new_backoff, new_backoff
+
+    @staticmethod
+    def _decide(goal, cur, issued=None):
         """Saf karar: hedefe ulaşıldı mı, değilse hangi komut? Yan etkisiz (test edilebilir).
         asena-on DECLARATIVE — mod değişince usque'yu kendi içinde restart eder
         (clean slate). Bu yüzden 'yanlış modda bağlı' -> yine 'on' (off->on DANSI YOK).
           goal: (transport, scope) | 'off' | None ;  cur: state dict | None
+          issued: bu hedef için asena-on zaten çağrıldı mı (h3->h2 fallback kabulü)
         Döner: 'done' | 'on' | 'off'."""
         if goal is None:
             return "done"
         if goal == "off":
             return "done" if cur is None else "off"
-        if cur is not None and (cur["transport"], cur["scope"]) == goal:
+        if cur is None:
+            return "on"
+        if cur["scope"] != goal[1]:
+            return "on"                       # scope tutmuyor -> (yeniden) uygula
+        if cur["transport"] == goal[0]:
             return "done"
-        return "on"
+        # transport farklı: hedefi ZATEN issue ettiysek, fark asena-on'un bilinçli
+        # h3->h2 fallback'ıdır (UDP bloklu ağ) -> kabul et. Aksi halde transport switch uygula.
+        return "done" if issued == goal else "on"
 
     def _reconcile(self):
         self.refresh()
         goal = self._goal
-        action = self._decide(goal, state.current_state())
+        action = self._decide(goal, state.current_state(), self._issued)
 
         if action == "done":
             self._reconciling = False
+            was = self._issued
             self._issued = None
+            # h3 istendi ama h2'ye düşüldüyse (UDP 443 bloklu ağ) kullanıcıya söyle
+            cur = state.current_state()
+            if isinstance(was, tuple) and cur and cur["transport"] != was[0]:
+                win.notify(APP_NAME, t("notify_transport_fallback",
+                                       got=_T_LABEL.get(cur["transport"], cur["transport"])))
             self.refresh()               # son durumu bildir (reconcile bitti)
             return
+
+        # Cihaz kaydı yoksa asena-on'u boşuna çağırma ('config.json yok' ile ölür,
+        # kullanıcıya 30sn sonra anlamsız 'zaman aşımı' görünürdü). Kaydı arka
+        # planda dene (blocking ağ çağrısı — UI thread'i dondurmasın), bitene dek
+        # bu döngüde bekle; başarısızsa AÇIKÇA bildir ve vazgeç.
+        if action == "on" and not CONFIG_JSON.exists():
+            if self._register_thread is None:
+                win.notify(APP_NAME, t("registering"))
+                self._register_thread = threading.Thread(
+                    target=install.ensure_registered, daemon=True)
+                self._register_thread.start()
+            elif not self._register_thread.is_alive():
+                # thread bitti ama config hâlâ yok -> kayıt başarısız
+                self._register_thread = None
+                self._reconciling = False
+                self._issued = None
+                win.notify(APP_NAME, t("register_fail"))
+                self.refresh()
+                return
+            QTimer.singleShot(500, self._reconcile)
+            return
+        if self._register_thread is not None and not self._register_thread.is_alive():
+            self._register_thread = None
 
         # ISSUE-ONCE: her HEDEF için komut BİR kez verilir. Aynı hedefe tekrar
         # asena-on/off gönderilmez -> thrashing imkânsız. Hedef değişirse
@@ -433,9 +589,21 @@ class AsenaTray:
         self._phase_ticks += 1
         limit = 60 if goal != "off" else 30     # ~30s / ~15s (500ms tik)
         if self._phase_ticks > limit:
+            # REVERT-ON-FAILURE: taranmış endpoint tünel açamadıysa (yanlış/ölü IP),
+            # register'ın verdiği bilinen-iyi endpoint'e TEK sefer dön ve baştan dene.
+            if goal != "off" and endpoint.was_applied():
+                endpoint.restore_endpoint()
+                win.notify(APP_NAME, t("opt_reverted"))
+                win.run_script("asena-off.ps1")       # temiz zemin (varsa yarım usque)
+                self._issued = None
+                self._phase_ticks = 0
+                QTimer.singleShot(1500, self._reconcile)
+                return
             self._reconciling = False
             self._issued = None
-            win.notify(APP_NAME, t("notify_timeout"))
+            tail = _log_tail()
+            msg = t("notify_timeout") + (f"\n{tail}" if tail else "")
+            win.notify(APP_NAME, msg)
             self.refresh()
             return
 
@@ -506,12 +674,57 @@ class AsenaTray:
             self._last_state = st
             self._initialized = True
 
+        # Ağ-değişimi izleme: bağlıyken ~15s'te bir fiziksel gateway'i kontrol et.
+        # state.json'daki gwIP'den farklıysa (WiFi switch / uykudan dönüş / hotspot)
+        # endpoint pin + route'lar bayatlar -> arka planda asena-on ile yeniden pinle.
+        if active and not self._reconciling and not self._updating:
+            self._net_tick += 1
+            if self._net_tick >= 5 and self._netwatch_worker is None:
+                self._net_tick = 0
+                self._netwatch_worker = _NetWatchWorker()
+                self._netwatch_worker.done.connect(self._on_netwatch)
+                self._netwatch_worker.start()
+        else:
+            self._net_tick = 0
+
+        # usque-watchdog: kullanıcı bağlı olmak isterken (desired.connected) tünel
+        # BEKLENMEDİK düştüyse (usque süreç çökmesi — --always-reconnect ağ blip'ini
+        # kapsar ama süreç ölümünü değil) BACKOFF'lu yeniden bağlan. Elle kesme
+        # (desired.connected=False) tetiklemez; connect denemesi sürerken bekler.
+        busy = self._reconciling or self._updating or self._register_thread is not None
+        fire, self._wd_wait, self._wd_backoff = self._watchdog_step(
+            active, state.read_desired()["connected"], busy, self._wd_wait, self._wd_backoff)
+        if fire:
+            d = state.read_desired()
+            self.set_target(d["transport"], d["scope"])
+
+    def _on_netwatch(self, live_gw):
+        self._netwatch_worker = None
+        if not live_gw or self._reconciling or self._updating:
+            return
+        cur = state.current_state()
+        if cur is None:
+            return                       # bu arada bağlantı kesildi
+        st = state.read_state()
+        base = st.get("gwIP") if st else None
+        if not base or live_gw == base:
+            return                       # gateway değişmedi (ya da baz bilinmiyor)
+        # Ağ değişti -> mevcut mod için route'ları yeniden uygula. usque çalıştığından
+        # asena-on RESTART ETMEZ; sadece endpoint pin/MTU/DNS'i yeni gateway'e göre
+        # tazeler ve state.json'daki gwIP'yi günceller (bir sonraki kontrol eşleşir).
+        win.notify(APP_NAME, t("notify_net_reapply"))
+        win.run_script("asena-on.ps1", args=["-Transport", cur["transport"], "-Scope", cur["scope"]])
+        self._net_tick = -10   # asena-on bitip state.json'u güncelleyene dek (~45s) tekrar tetikleme
+
     def emergency_cleanup(self):
         """Kapanırken Asena açıksa SENKRON kapat ki DNS/route teardown tamamlansın.
 
         Tray elevated olduğundan asena-off.ps1 doğrudan admin olarak koşar;
-        wait=True ile bitmesini bekleriz (fire-and-forget'te yarıda kalmaz)."""
-        if state.current_state() is None:
+        wait=True ile bitmesini bekleriz (fire-and-forget'te yarıda kalmaz).
+
+        GÜNCELLEME İSTİSNASI: _updating iken teardown ATLANIR — tünel açık kalır,
+        yeni tray onu devralır (kesintisiz güncelleme + copy-lock yarışı yok)."""
+        if self._updating or state.current_state() is None:
             return
         try:
             win.run_script("asena-off.ps1", wait=True, timeout=20)

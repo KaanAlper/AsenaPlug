@@ -43,9 +43,9 @@ UP_TO_DATE = "up_to_date"    # erişildi + güncel (None ağ HATASIndan ayrı)
 
 def check_latest(timeout: int = 15):
     """En son release'i denetle. Döner:
-      (tag, url, notes) — yeni sürüm + .exe asset var
-      UP_TO_DATE        — erişildi, güncel (ya da .exe yok)
-      None              — AĞ HATASI / erişilemedi ('en güncel' DEME, 'denetlenemedi')
+      (tag, url, notes, sha_url) — yeni sürüm + .exe asset var (sha_url yoksa None)
+      UP_TO_DATE                 — erişildi, güncel (ya da .exe yok)
+      None                       — AĞ HATASI / erişilemedi ('denetlenemedi')
 
     Bağlıyken (tünel latency, full modda IPv6 blok) urlopen başarısız olursa
     None döner -> tray 'denetlenemedi' der, yanlışlıkla 'en güncel' demez."""
@@ -58,10 +58,58 @@ def check_latest(timeout: int = 15):
     tag = data.get("tag_name", "")
     if not tag or not is_newer(tag, APP_VERSION):
         return UP_TO_DATE
+    exe_url = sha_url = None
     for a in data.get("assets", []):
-        if a.get("name", "").lower().endswith(".exe"):
-            return tag, a.get("browser_download_url"), (data.get("body") or "").strip()
-    return UP_TO_DATE
+        name = a.get("name", "").lower()
+        if name.endswith(".exe"):
+            exe_url = a.get("browser_download_url")
+        elif name.endswith(".sha256"):
+            sha_url = a.get("browser_download_url")
+    if not exe_url:
+        return UP_TO_DATE
+    return tag, exe_url, (data.get("body") or "").strip(), sha_url
+
+
+# ------------------------------------------------------------ bütünlük (sha256)
+def sha256_file(path: Path, chunk: int = 1 << 16) -> str | None:
+    """Dosyanın SHA256'sı (küçük harf hex); okunamazsa None."""
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for b in iter(lambda: f.read(chunk), b""):
+                h.update(b)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
+def parse_sha256(text: str) -> str | None:
+    """'<hex>  dosya' ya da düz '<hex>' -> 64-hex hash (küçük); geçersizse None."""
+    tok = (text or "").strip().split()
+    if not tok:
+        return None
+    h = tok[0].lower()
+    return h if re.fullmatch(r"[0-9a-f]{64}", h) else None
+
+
+def verify_download(path: Path, sha_url: str | None, timeout: int = 15) -> bool:
+    """İndirilen exe'yi admin olarak çalıştırmadan önce doğrula.
+      - sha_url yok (eski release)         -> True (geriye uyumlu; kanal yine HTTPS)
+      - sha alınamadı/parse edilemedi      -> True (flaky sha yüzünden güncelleme bloke olmasın)
+      - sha var ve EŞLEŞMİYOR               -> False (kurcalanmış/bozuk indirme -> çalıştırma)"""
+    if not sha_url:
+        return True
+    try:
+        req = urllib.request.Request(sha_url, headers=_UA)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            expected = parse_sha256(r.read().decode("utf-8", "replace"))
+    except Exception:
+        return True
+    if not expected:
+        return True
+    actual = sha256_file(path)
+    return actual is not None and actual == expected
 
 
 def download(url: str, dest: Path, progress_cb=None, timeout: int = 30) -> bool:
@@ -125,16 +173,19 @@ class Downloader(QObject):
     progress = Signal(int)           # 0-100
     finished = Signal(bool, str)     # (ok, dest)
 
-    def __init__(self, url: str, dest: Path):
+    def __init__(self, url: str, dest: Path, sha_url: str | None = None):
         super().__init__()
         self._url = url
         self._dest = dest
+        self._sha_url = sha_url
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self):
         ok = download(self._url, self._dest, self.progress.emit)
+        if ok and not verify_download(self._dest, self._sha_url):
+            ok = False   # hash uyuşmadı -> bozuk/kurcalanmış; çalıştırma
         self.finished.emit(ok, str(self._dest))
 
 

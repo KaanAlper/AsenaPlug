@@ -8,6 +8,9 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
+# Ortak mantık (Disable-KillSwitch) — asena-off silinmiş olsa bile emniyet için
+. (Join-Path $PSScriptRoot 'asena-common.ps1')
+
 $ProgramFilesDir = Join-Path $env:ProgramFiles "AsenaPlug"
 
 # 1. Teardown (NRPT, firewall, route, DNS reset, usque/dnsproxy durdur)
@@ -20,6 +23,7 @@ Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
     ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
 Remove-NetFirewallRule -Group "AsenaPlug-IPv6-FailClosed" -ErrorAction SilentlyContinue
 Remove-NetFirewallRule -Group "AsenaPlug-Full-IPv6Block" -ErrorAction SilentlyContinue
+Disable-KillSwitch   # default outbound=Block artığı kalmasın (internet gitmesin)
 Stop-Process -Name "usque", "dnsproxy" -Force -ErrorAction SilentlyContinue
 
 # 3. Scheduled task'lar

@@ -23,8 +23,13 @@ def _msgbox_error(text: str):
 
 def _run_setup_visible():
     """İlk kurulumu GÖRÜNÜR yap: ekranın sağ-altında 'Kuruluyor…' göstergesi +
-    bitince 'Hazır — tepside' bildirimi. Sessiz devir/kaybolma hissi kalkar."""
-    from PySide6.QtCore import QLocale
+    bitince 'Hazır — tepside' bildirimi. Sessiz devir/kaybolma hissi kalkar.
+
+    run_setup ARKA PLANDA koşar (binary kopya + task kaydı + register + endpoint
+    taraması ~10-20sn bloklar); yerel bir event loop döner ki kayan çubuk animasyonu
+    çalışsın ve pencere 'Yanıt vermiyor'a düşmesin. Bitince sinyalle kapanır."""
+    import threading
+    from PySide6.QtCore import QEventLoop, QLocale, QObject, Signal
     from PySide6.QtWidgets import QApplication
     from asenaplug import i18n, update
     from asenaplug.i18n import t
@@ -35,14 +40,31 @@ def _run_setup_visible():
     toast = update.UpdateToast(APP_NAME, t("setup_running"))
     toast.set_busy()
     toast.show_bottom_right()
-    app.processEvents()
-    try:
-        install.run_setup()
-    except Exception as e:
-        toast.close()
-        _msgbox_error(str(e))
-        sys.exit(1)
+
+    class _SetupWorker(QObject):
+        done = Signal(object)   # None = başarı, str = hata mesajı
+
+        def start(self):
+            threading.Thread(target=self._run, daemon=True).start()
+
+        def _run(self):
+            try:
+                install.run_setup()
+                self.done.emit(None)
+            except Exception as e:  # noqa: BLE001 — mesajı UI thread'ine taşı
+                self.done.emit(str(e))
+
+    holder = {}
+    loop = QEventLoop()
+    worker = _SetupWorker()
+    worker.done.connect(lambda err: (holder.__setitem__("err", err), loop.quit()))
+    worker.start()
+    loop.exec()                 # event loop döner -> çubuk animasyonu akıcı, pencere donmaz
+
     toast.close()
+    if holder.get("err"):
+        _msgbox_error(holder["err"])
+        sys.exit(1)
     win.notify(APP_NAME, t("setup_done"))
 
 
@@ -70,6 +92,7 @@ def main():
     # Aynı anda tek tray (logon görevi + elle açış iki tray açmasın)
     if not win.acquire_single_instance():
         sys.exit(0)
+    install.trim_log()   # usque.log sınırsız büyümesin (açılışta boyut kontrolü)
     AsenaTray().run()
 
 

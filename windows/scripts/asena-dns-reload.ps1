@@ -9,6 +9,9 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
+# Ortak mantık (blacklist parse + dnsproxy args) — asena-on ile TEK kaynak
+. (Join-Path $PSScriptRoot 'asena-common.ps1')
+
 $DataDir      = Join-Path $env:ProgramData "AsenaPlug"
 $ConfigDir    = Join-Path $DataDir "config"
 $RunDir       = Join-Path $DataDir "run"
@@ -49,16 +52,8 @@ Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
     Where-Object { $_.NameServers -contains $ListenDns } |
     ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
 
-# Blacklist oku
-$domains = @()
-if (Test-Path $BlacklistTxt) {
-    $domains = Get-Content $BlacklistTxt |
-        ForEach-Object { ($_ -replace '#.*', '').Trim() } |
-        Where-Object { $_ -ne '' } |
-        ForEach-Object { (($_ -replace '^\*\.', '') -replace ':\d+.*$', '').TrimEnd('.').ToLower() } |
-        Where-Object { $_ -match '^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$' } |
-        Sort-Object -Unique
-}
+# Blacklist oku (ortak parse)
+$domains = @(Get-BlacklistDomains $BlacklistTxt)
 
 if ($domains.Count -eq 0) {
     Stop-Process -Name "dnsproxy" -Force -ErrorAction SilentlyContinue
@@ -70,10 +65,9 @@ if ($domains.Count -eq 0) {
 if (-not (Get-Process -Name "dnsproxy" -ErrorAction SilentlyContinue)) {
     if (Test-Path $DnsproxyExe) {
         # Cache PIN — asena-on/route-sync ile AYNI (tarayıcı/route-sync uyuşmazlığı yok)
-        Start-Process -FilePath $DnsproxyExe -ArgumentList @(
-            "-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2,
-            "--cache", "--cache-optimistic", "--cache-min-ttl=600", "--cache-size=4194304"
-        ) -NoNewWindow -ErrorAction SilentlyContinue
+        Start-Process -FilePath $DnsproxyExe `
+            -ArgumentList (Get-DnsproxyArgs $ListenDns $UpstreamDns1 $UpstreamDns2) `
+            -NoNewWindow -ErrorAction SilentlyContinue
     }
 }
 $ok = $false; $tries = 0
@@ -91,7 +85,8 @@ if ($ok) {
             Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
         New-NetRoute -DestinationPrefix "$r/32" -InterfaceAlias $TunName -RouteMetric 1 -ErrorAction SilentlyContinue | Out-Null
     }
-    $ns = @($domains | ForEach-Object { "." + $_ })
+    # Hem apex ("site.com") hem subdomain (".site.com") — asena-on ile aynı gerekçe
+    $ns = @($domains | ForEach-Object { $_; "." + $_ })
     Add-DnsClientNrptRule -Namespace $ns -NameServers $ListenDns -ErrorAction SilentlyContinue
 
     # /32 route'ları route-sync ARKA PLANDA yeniden kurar (yukarıda temizlendi).

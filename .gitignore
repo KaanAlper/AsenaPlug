@@ -18,6 +18,8 @@ dist/
 build/
 *.spec
 .pytest_cache/
+windows/version_info.txt              # build.ps1 tarafından APP_VERSION'dan üretilir
+windows/bundled/asena-killswitch.exe  # build.ps1 tarafından go ile derlenir (kaynak: windows/killswitch/)
 
 # superpowers plugin scaffolding
 docs/superpowers/

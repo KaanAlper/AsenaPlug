@@ -15,11 +15,17 @@ normalize_domain / parse_blacklist saf fonksiyonlardır (Windows gerektirmez,
 Linux'ta unit-test edilebilir).
 """
 import json
+import re
 
 from .paths import (
     BLACKLIST_PATH, DESIRED_FILE, STATE_FILE, TUN_NAME,
     DEFAULT_TRANSPORT, DEFAULT_SCOPE, TRANSPORTS, SCOPES,
 )
+
+# asena-on.ps1 / route-sync ile AYNI geçerlilik kuralı: en az bir noktalı, 2+ harfli
+# TLD'li ad. Böylece tray "eklendi" derken PS'in sessizce eleyeceği (ör. 'localhost')
+# girdiler baştan reddedilir -> tray ile NRPT tutarlı kalır.
+_DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$")
 
 
 # --- desired / state ---
@@ -36,19 +42,28 @@ def read_desired() -> dict:
     except Exception:
         d = {}
     t, s = _coerce(d.get("transport"), d.get("scope"))
-    return {"transport": t, "scope": s, "connected": bool(d.get("connected", False))}
+    return {"transport": t, "scope": s,
+            "connected": bool(d.get("connected", False)),
+            "killswitch": bool(d.get("killswitch", False))}
 
 
-def write_desired(transport: str, scope: str, connected: bool | None = None):
+def write_desired(transport: str, scope: str, connected: bool | None = None,
+                  killswitch: bool | None = None):
     """Tray'in istediği durum. connected: True=bağlı olmalı, False=kesik,
     None=KORU (mod seçimi bağlantı niyetini değiştirmez). autostart/update
-    sonrası oto-reconnect bu 'connected' bayrağına bakar (son durumu hatırla)."""
+    sonrası oto-reconnect bu 'connected' bayrağına bakar. killswitch: None=KORU
+    (kalıcı tercih; asena-on desired.json'dan okur, yalnız full modda uygular)."""
     t, s = _coerce(transport, scope)
-    if connected is None:
-        connected = read_desired()["connected"]
+    if connected is None or killswitch is None:
+        cur = read_desired()
+        if connected is None:
+            connected = cur["connected"]
+        if killswitch is None:
+            killswitch = cur["killswitch"]
     DESIRED_FILE.parent.mkdir(parents=True, exist_ok=True)
     DESIRED_FILE.write_text(
-        json.dumps({"transport": t, "scope": s, "connected": bool(connected)}),
+        json.dumps({"transport": t, "scope": s, "connected": bool(connected),
+                    "killswitch": bool(killswitch)}),
         encoding="utf-8",
     )
 
@@ -91,7 +106,9 @@ def normalize_domain(line: str) -> str | None:
         line = line[2:]
     line = line.split("/", 1)[0].split(":", 1)[0]  # yol/port sıyır (ör. site.com:443)
     line = line.strip().strip(".").lower()
-    return line or None
+    if not line or not _DOMAIN_RE.match(line):
+        return None   # TLD'siz/geçersiz (ör. 'localhost') -> PS de elerdi, tutarlı ol
+    return line
 
 
 def parse_blacklist(text: str) -> list[str]:
