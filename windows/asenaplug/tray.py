@@ -115,8 +115,12 @@ class AsenaTray:
         self._sel_transport = d["transport"]
         self._sel_scope = d["scope"]
         self._last_state: dict | None = None
-        self._pending: tuple[str, str] | None = None
         self._initialized = False
+        # --- reconciler durumu (tek hedef, tek timer; thrashing yok) ---
+        self._goal = None        # (transport, scope) = bağlan; "off" = kes; None = boşta
+        self._phase = None       # en son verilen komut: "on" | "off" | None
+        self._phase_ticks = 0
+        self._reconciling = False
 
         self.tray = QSystemTrayIcon()
         TRAY_REF = self.tray
@@ -131,6 +135,12 @@ class AsenaTray:
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh)
         self.timer.start(3000)
+
+        # Debounce: hızlı ardışık tıklamalar (transport+scope) tek işleme birleşsin
+        self._debounce = QTimer()
+        self._debounce.setSingleShot(True)
+        self._debounce.timeout.connect(self._begin_reconcile)
+
         self.app.aboutToQuit.connect(self.emergency_cleanup)
 
     # ------------------------------------------------------------------ menu
@@ -217,57 +227,107 @@ class AsenaTray:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.toggle()
 
+    def _connected_or_connecting(self) -> bool:
+        """Bağlı, VEYA bağlanmaya çalışıyor (reconcile bir connect hedefine gidiyor).
+        Geçişin 'off' penceresinde current_state() anlık None olsa da mod
+        değişikliği hedefe yansısın — seçim düşmesin."""
+        if state.current_state() is not None:
+            return True
+        return self._reconciling and self._goal not in (None, "off")
+
     def choose_transport(self, t: str):
         self._sel_transport = t
         state.write_desired(self._sel_transport, self._sel_scope)
-        if state.current_state() is not None:
+        if self._connected_or_connecting():
             self.set_target(t, self._sel_scope)
 
     def choose_scope(self, s: str):
         self._sel_scope = s
         state.write_desired(self._sel_transport, self._sel_scope)
         self.rebuild_blacklist_menu()
-        if state.current_state() is not None:
+        if self._connected_or_connecting():
             self.set_target(self._sel_transport, s)
 
     # ------------------------------------------------------------------ control
+    # Reconciliation loop (Kubernetes controller / desired-vs-actual deseni):
+    # tek HEDEF + tek timer + faz-kilidi. Eski "her tıkta ayrı QTimer zinciri"
+    # yerine; çakışma/thrashing yok, en son hedef kazanır, kendini iyileştirir.
     def set_target(self, transport: str, scope: str):
-        """İstenen moda geç. transport/scope asena-on'a ARGÜMAN olarak geçer
-        (desired.json round-trip'ine güvenmez). Ayar-değişimi bildirimi YOK;
-        sadece refresh() gerçek connect/disconnect'i bildirir."""
         state.write_desired(transport, scope)          # kalıcılık (boot/route-sync)
-        self._pending = (transport, scope)
-        cur = state.current_state()
-        if cur is None:
-            self._start(transport, scope)
-        elif (cur["transport"], cur["scope"]) != (transport, scope):
-            # Mod değişimi: önce kapat, kapandığını gör, sonra hedefle aç
-            win.run_script("asena-off.ps1")
-            self._after_off_then_on()
-
-    def _start(self, transport: str, scope: str):
-        win.run_script("asena-on.ps1", args=["-Transport", transport, "-Scope", scope])
-        self._watch(lambda: state.current_state() is not None)
+        self._request((transport, scope))
 
     def disconnect(self):
-        win.run_script("asena-off.ps1")
-        self._watch(lambda: state.current_state() is None)
+        self._request("off")
 
-    def _after_off_then_on(self, attempts: int = 0):
-        if state.current_state() is None:
-            t, s = self._pending or (self._sel_transport, self._sel_scope)
-            self._start(t, s)
-        elif attempts < 25:
-            QTimer.singleShot(400, lambda: self._after_off_then_on(attempts + 1))
-        # değilse vazgeç; refresh gerçek durumu gösterir
+    def _request(self, goal):
+        """goal: (transport, scope) = bağlan; 'off' = kes. En son istek kazanır."""
+        self._goal = goal
+        if self._reconciling:
+            return                       # loop çalışıyor; sonraki tik en son hedefi alır
+        self._debounce.start(350)        # debounce: hızlı ardışık tıklamaları birleştir
 
-    def _watch(self, cond, attempts: int = 0):
-        """Koşul gerçekleşene dek (~10sn) poll'la, her adımda ikonu güncelle."""
+    def _begin_reconcile(self):
+        if not self._reconciling:
+            self._reconciling = True
+            self._phase = None
+            self._phase_ticks = 0
+            self._reconcile()
+
+    @staticmethod
+    def _decide(goal, cur, phase):
+        """Saf karar: (hedef, mevcut durum, son faz) -> eylem. Yan etkisiz => test edilebilir.
+          goal: (transport, scope) | 'off' | None ;  cur: state dict | None
+        Döner:
+          'done' — hedefe ulaşıldı
+          'on'   — asena-on ver (kapalı, hedefe aç)
+          'off'  — asena-off ver (kapatılmalı: kesme ya da yanlış modda bağlı)
+          'wait' — komut zaten verildi (phase eşleşiyor), gelmesini bekle"""
+        if goal is None:
+            return "done"
+        connected = cur is not None
+        if goal == "off":
+            if not connected:
+                return "done"
+            return "wait" if phase == "off" else "off"
+        # goal = (transport, scope)
+        if connected and (cur["transport"], cur["scope"]) == goal:
+            return "done"
+        if connected:                    # yanlış modda bağlı -> önce kapat
+            return "wait" if phase == "off" else "off"
+        return "wait" if phase == "on" else "on"   # kapalı -> hedefle aç
+
+    def _reconcile(self):
         self.refresh()
-        if cond() or attempts >= 25:
+        goal = self._goal
+        action = self._decide(goal, state.current_state(), self._phase)
+
+        if action == "done":
+            self._reconciling = False
+            self._phase = None
+            self.refresh()               # son durumu bildir (reconcile bitti)
+            return
+
+        # Komut SADECE faz değişiminde verilir ('wait' => tekrar verme, thrashing yok)
+        if action == "on":
+            win.run_script("asena-on.ps1", args=["-Transport", goal[0], "-Scope", goal[1]])
+            self._phase = "on"
+            self._phase_ticks = 0
+        elif action == "off":
+            win.run_script("asena-off.ps1")
+            self._phase = "off"
+            self._phase_ticks = 0
+
+        # Timeout: faz takılırsa vazgeç (asena-on/off gelmedi)
+        self._phase_ticks += 1
+        limit = 44 if self._phase == "on" else 24     # ~22s / ~12s (500ms tik)
+        if self._phase_ticks > limit:
+            self._reconciling = False
+            self._phase = None
+            win.notify(APP_NAME, "İşlem zaman aşımına uğradı — tekrar dene.")
             self.refresh()
             return
-        QTimer.singleShot(400, lambda: self._watch(cond, attempts + 1))
+
+        QTimer.singleShot(500, self._reconcile)
 
     # ------------------------------------------------------------------ blacklist
     def open_blacklist(self):
@@ -316,13 +376,16 @@ class AsenaTray:
         for s, a in self.scope_actions.items():
             a.setChecked(s == shown_s)
 
-        if self._initialized and st != self._last_state:
-            if active:
-                win.notify(APP_NAME, f"Connected ({_T_LABEL[st['transport']]} · {_S_LABEL[st['scope']]})")
-            else:
-                win.notify(APP_NAME, "Disconnected")
-        self._last_state = st
-        self._initialized = True
+        # Reconcile sürerken ARA durumları bildirme; _last_state'i de dondur ki
+        # geçiş bitince (reconcile kapanınca) tek "Connected/Disconnected" gelsin.
+        if not self._reconciling:
+            if self._initialized and st != self._last_state:
+                if active:
+                    win.notify(APP_NAME, f"Connected ({_T_LABEL[st['transport']]} · {_S_LABEL[st['scope']]})")
+                else:
+                    win.notify(APP_NAME, "Disconnected")
+            self._last_state = st
+            self._initialized = True
 
     def emergency_cleanup(self):
         """Kapanırken Asena açıksa SENKRON kapat ki DNS/route teardown tamamlansın.
