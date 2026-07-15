@@ -15,7 +15,7 @@ from . import win
 from .paths import (
     INSTALL_DIR, SCRIPTS_DIR, USQUE_EXE, WINTUN_DLL, DNSPROXY_EXE,
     DATA_DIR, CONFIG_DIR, RUN_DIR, CONFIG_JSON, BLACKLIST_PATH, SETUP_FLAG, LOG_FILE,
-    TASKS, APP_NAME,
+    TASKS, APP_NAME, APP_VERSION, VERSION_FILE,
     LEGACY_CLEAN_FLAG, LEGACY_STARTUP_VBS, LEGACY_TASKS,
 )
 
@@ -45,8 +45,51 @@ def bundle_path(relative: str) -> Path:
     return Path(base) / relative
 
 
+def _ver_tuple(s: str):
+    """'1.0.9' -> (1,0,9). Rakam yoksa (0,). (update.parse_version'ın PySide6'sız ikizi.)"""
+    import re
+    n = re.findall(r"\d+", s or "")
+    return tuple(int(x) for x in n) if n else (0,)
+
+
+def installed_version():
+    """Kurulu sürüm (version.txt), yoksa None."""
+    try:
+        return VERSION_FILE.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def _write_version():
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        VERSION_FILE.write_text(APP_VERSION, encoding="utf-8")
+    except OSError as e:
+        log(f"version.txt yazılamadı: {e}")
+
+
 def needs_setup() -> bool:
+    """İlk kurulum mu? version.txt yoksa first-run. (Eski kurulumda version.txt
+    yok ama SETUP_FLAG var → kurulu say, ilk açılışta version.txt yazılır.)"""
+    if installed_version() is not None:
+        return False
     return not SETUP_FLAG.exists()
+
+
+def needs_upgrade() -> bool:
+    """Kurulu ama exe sürümü daha yeni → binary/script tazele (kullanıcının
+    version.txt fikri: kurulu < açılan exe ise güncelle)."""
+    iv = installed_version()
+    if iv is None:
+        return False
+    return _ver_tuple(iv) < _ver_tuple(APP_VERSION)
+
+
+def apply_upgrade():
+    """Güncelleme sonrası: script/binary'leri tazele + version.txt'i güncelle."""
+    refresh_scripts()
+    install_self()
+    _write_version()
 
 
 def refresh_scripts():
@@ -122,6 +165,7 @@ def run_setup():
 
     # 8. Tamamlandı (autostart = AsenaPlug_Tray logon görevi, adım 5'te kuruldu)
     SETUP_FLAG.touch()
+    _write_version()          # kurulu sürümü işaretle (sonraki açılışta first-run/upgrade ayrımı)
 
 
 def _grant_users_modify(path: Path):

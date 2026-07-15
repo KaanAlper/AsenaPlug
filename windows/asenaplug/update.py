@@ -175,6 +175,10 @@ class UpdateToast(QWidget):
     def set_pct(self, pct: int):
         self._bar.setValue(pct)
 
+    def set_busy(self):
+        """Belirsiz ilerleme (adımlar ölçülemez; ör. kurulum) — kayan çubuk."""
+        self._bar.setRange(0, 0)
+
     def set_sub(self, text: str):
         self._s.setText(text)
 

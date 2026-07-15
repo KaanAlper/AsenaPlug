@@ -67,6 +67,8 @@ TRANSLATIONS = {
         "upd_installing": "Installing, restarting…",
         "upd_fail": "Update failed. Try again.",
         "upd_check_fail": "Couldn't check (connection?).",
+        "setup_running": "Setting up…",
+        "setup_done": "Ready — in the system tray.",
     },
     "de": {
         "connect": "Verbinden",
@@ -107,6 +109,8 @@ TRANSLATIONS = {
         "upd_installing": "Installation, Neustart…",
         "upd_fail": "Update fehlgeschlagen. Erneut versuchen.",
         "upd_check_fail": "Prüfung fehlgeschlagen (Verbindung?).",
+        "setup_running": "Wird eingerichtet…",
+        "setup_done": "Bereit — im Infobereich.",
     },
     "es": {
         "connect": "Conectar",
@@ -147,6 +151,8 @@ TRANSLATIONS = {
         "upd_installing": "Instalando, reiniciando…",
         "upd_fail": "Actualización fallida. Inténtalo de nuevo.",
         "upd_check_fail": "No se pudo comprobar (¿conexión?).",
+        "setup_running": "Configurando…",
+        "setup_done": "Listo — en la bandeja.",
     },
     "fr": {
         "connect": "Se connecter",
@@ -187,6 +193,8 @@ TRANSLATIONS = {
         "upd_installing": "Installation, redémarrage…",
         "upd_fail": "Échec de la mise à jour. Réessayez.",
         "upd_check_fail": "Vérification impossible (connexion ?).",
+        "setup_running": "Installation…",
+        "setup_done": "Prêt — dans la barre d'état.",
     },
     "tr": {
         "connect": "Bağlan",
@@ -227,6 +235,8 @@ TRANSLATIONS = {
         "upd_installing": "Kuruluyor, yeniden başlatılıyor…",
         "upd_fail": "Güncelleme başarısız. Tekrar dene.",
         "upd_check_fail": "Denetlenemedi (bağlantı?).",
+        "setup_running": "Kuruluyor…",
+        "setup_done": "Hazır — sistem tepsisinde.",
     },
 }
 
