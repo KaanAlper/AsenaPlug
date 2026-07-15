@@ -69,6 +69,25 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "pip install başarısız (exit $LASTEXITCODE)" }
     }
 
+    # Tray yalnız QtWidgets/QtGui/QtCore kullanır. PyInstaller bazı ağır Qt
+    # modüllerini dolaylı çeker; bunları dışla -> exe küçülür -> onefile extract
+    # (autostart açılış gecikmesi) kısalır. Bunlar import EDİLMİYOR, güvenli.
+    $exclude = @(
+        "PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuick3D",
+        "PySide6.QtQuickWidgets", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
+        "PySide6.QtWebEngineQuick", "PySide6.QtWebChannel", "PySide6.QtWebSockets",
+        "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets", "PySide6.QtSpatialAudio",
+        "PySide6.Qt3DCore", "PySide6.Qt3DRender", "PySide6.QtCharts", "PySide6.QtGraphs",
+        "PySide6.QtDataVisualization", "PySide6.QtPdf", "PySide6.QtPdfWidgets",
+        "PySide6.QtSql", "PySide6.QtTest", "PySide6.QtPositioning", "PySide6.QtLocation",
+        "PySide6.QtBluetooth", "PySide6.QtNfc", "PySide6.QtSensors", "PySide6.QtSerialPort",
+        "PySide6.QtDesigner", "PySide6.QtHelp", "PySide6.QtUiTools", "PySide6.QtTextToSpeech",
+        "PySide6.QtHttpServer", "PySide6.QtRemoteObjects", "PySide6.QtScxml",
+        "PySide6.QtStateMachine", "tkinter", "unittest", "pydoc", "test"
+    )
+    $excludeArgs = @()
+    foreach ($m in $exclude) { $excludeArgs += "--exclude-module"; $excludeArgs += $m }
+
     # --- Build ---
     Write-Host "PyInstaller çalışıyor..." -ForegroundColor Cyan
     & $pyExe @pyPre -m PyInstaller --noconfirm --clean --onefile --windowed `
@@ -87,6 +106,7 @@ try {
         --hidden-import asenaplug.i18n `
         --hidden-import asenaplug.update `
         --hidden-import winotify `
+        @excludeArgs `
         "AsenaPlug.pyw"
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller başarısız (exit $LASTEXITCODE)" }
 
