@@ -61,7 +61,7 @@ def installed_version():
 
 def _write_version():
     try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        INSTALL_DIR.mkdir(parents=True, exist_ok=True)   # version.txt uygulama klasöründe
         VERSION_FILE.write_text(APP_VERSION, encoding="utf-8")
     except OSError as e:
         log(f"version.txt yazılamadı: {e}")

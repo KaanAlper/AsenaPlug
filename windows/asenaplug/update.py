@@ -38,9 +38,17 @@ def is_newer(latest: str, current: str) -> bool:
     return parse_version(latest) > parse_version(current)
 
 
-def check_latest(timeout: int = 8):
-    """En son release'i denetle. Yeni + .exe asset'i varsa (tag, url, notes),
-    yoksa/erişilemezse None döner."""
+UP_TO_DATE = "up_to_date"    # erişildi + güncel (None ağ HATASIndan ayrı)
+
+
+def check_latest(timeout: int = 15):
+    """En son release'i denetle. Döner:
+      (tag, url, notes) — yeni sürüm + .exe asset var
+      UP_TO_DATE        — erişildi, güncel (ya da .exe yok)
+      None              — AĞ HATASI / erişilemedi ('en güncel' DEME, 'denetlenemedi')
+
+    Bağlıyken (tünel latency, full modda IPv6 blok) urlopen başarısız olursa
+    None döner -> tray 'denetlenemedi' der, yanlışlıkla 'en güncel' demez."""
     try:
         req = urllib.request.Request(API_LATEST, headers=_UA)
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -49,11 +57,11 @@ def check_latest(timeout: int = 8):
         return None
     tag = data.get("tag_name", "")
     if not tag or not is_newer(tag, APP_VERSION):
-        return None
+        return UP_TO_DATE
     for a in data.get("assets", []):
         if a.get("name", "").lower().endswith(".exe"):
             return tag, a.get("browser_download_url"), (data.get("body") or "").strip()
-    return None
+    return UP_TO_DATE
 
 
 def download(url: str, dest: Path, progress_cb=None, timeout: int = 30) -> bool:
