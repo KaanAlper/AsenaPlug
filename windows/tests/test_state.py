@@ -42,9 +42,21 @@ def test_parse_empty():
 
 # --- desired coerce / defaults ---
 def test_read_desired_defaults_when_missing():
-    # Linux'ta DESIRED_FILE yok -> varsayılanlar
+    # Linux'ta DESIRED_FILE yok -> varsayılanlar (connected default False)
     d = state.read_desired()
-    assert d == {"transport": DEFAULT_TRANSPORT, "scope": DEFAULT_SCOPE}
+    assert d == {"transport": DEFAULT_TRANSPORT, "scope": DEFAULT_SCOPE, "connected": False}
+
+
+def test_desired_connected_persist_and_preserve(monkeypatch, tmp_path):
+    """Oto-reconnect: connect->connected=True, disconnect->False, mod seçimi
+    (connected=None) niyeti KORUR (autostart/update sonrası doğru davransın)."""
+    monkeypatch.setattr(state, "DESIRED_FILE", tmp_path / "desired.json")
+    state.write_desired("http3", "full", connected=True)          # connect
+    assert state.read_desired() == {"transport": "http3", "scope": "full", "connected": True}
+    state.write_desired("http2", "selective")                     # mod seçimi -> niyet korunur
+    assert state.read_desired()["connected"] is True
+    state.write_desired("http2", "selective", connected=False)    # disconnect
+    assert state.read_desired()["connected"] is False
 
 
 def test_coerce_invalid_falls_back():
