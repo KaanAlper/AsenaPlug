@@ -36,14 +36,20 @@ def read_desired() -> dict:
     except Exception:
         d = {}
     t, s = _coerce(d.get("transport"), d.get("scope"))
-    return {"transport": t, "scope": s}
+    return {"transport": t, "scope": s, "connected": bool(d.get("connected", False))}
 
 
-def write_desired(transport: str, scope: str):
+def write_desired(transport: str, scope: str, connected: bool | None = None):
+    """Tray'in istediği durum. connected: True=bağlı olmalı, False=kesik,
+    None=KORU (mod seçimi bağlantı niyetini değiştirmez). autostart/update
+    sonrası oto-reconnect bu 'connected' bayrağına bakar (son durumu hatırla)."""
     t, s = _coerce(transport, scope)
+    if connected is None:
+        connected = read_desired()["connected"]
     DESIRED_FILE.parent.mkdir(parents=True, exist_ok=True)
     DESIRED_FILE.write_text(
-        json.dumps({"transport": t, "scope": s}), encoding="utf-8"
+        json.dumps({"transport": t, "scope": s, "connected": bool(connected)}),
+        encoding="utf-8",
     )
 
 

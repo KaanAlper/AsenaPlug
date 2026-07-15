@@ -155,6 +155,11 @@ class AsenaTray:
         if getattr(sys, "frozen", False) and update.auto_due():
             QTimer.singleShot(4000, lambda: self.check_for_updates(silent=True))
 
+        # Oto-reconnect: son durumda BAĞLI idiysek (update/restart/logon öncesi) ve
+        # şu an bağlı değilsek, kalan mod ile otomatik geri bağlan (durumu hatırla).
+        if d["connected"] and state.current_state() is None:
+            QTimer.singleShot(3500, self._auto_reconnect)
+
     # ------------------------------------------------------------------ menu
     def _build_menu(self):
         self.menu = QMenu()
@@ -352,11 +357,19 @@ class AsenaTray:
     # tek HEDEF + tek timer + faz-kilidi. Eski "her tıkta ayrı QTimer zinciri"
     # yerine; çakışma/thrashing yok, en son hedef kazanır, kendini iyileştirir.
     def set_target(self, transport: str, scope: str):
-        state.write_desired(transport, scope)          # kalıcılık (boot/route-sync)
+        state.write_desired(transport, scope, connected=True)   # niyet: BAĞLI (oto-reconnect)
         self._request((transport, scope))
 
     def disconnect(self):
+        state.write_desired(self._sel_transport, self._sel_scope, connected=False)  # niyet: KESİK
         self._request("off")
+
+    def _auto_reconnect(self):
+        """Autostart/update sonrası: niyet 'bağlı' + hâlâ değilsek son modla bağlan.
+        (Gecikme içinde kullanıcı elle bağlandıysa / reconcile başladıysa atla.)"""
+        d = state.read_desired()
+        if d["connected"] and state.current_state() is None and not self._reconciling:
+            self.set_target(d["transport"], d["scope"])
 
     def _request(self, goal):
         """goal: (transport, scope) = bağlan; 'off' = kes. En son istek kazanır."""
@@ -435,7 +448,9 @@ class AsenaTray:
             return
         title = t("notify_title_blacklist")
         if state.add_domain(domain):
-            win.notify(title, t("notify_added", domain=domain.strip()))
+            # Bağlıysa 'DNS yenile ile aktif et'; kapalıysa bağlanınca zaten alınır
+            key = "notify_added" if state.current_state() is not None else "notify_added_offline"
+            win.notify(title, t(key, domain=domain.strip()))
         else:
             win.notify(title, t("notify_not_added"))
         self.rebuild_blacklist_menu()
@@ -443,7 +458,9 @@ class AsenaTray:
     def reload_dns(self):
         title = f"{APP_NAME} {t('notify_title_blacklist')}"
         if state.current_state() is None:
-            win.notify(title, t("notify_open_first", app=APP_NAME))
+            # Kapalıyken yenilemeye GEREK YOK — connect (asena-on) zaten blacklist'i
+            # okuyup NRPT + warm-up ile hepsini alır. Sadece bilgilendir.
+            win.notify(title, t("notify_apply_on_connect"))
             return
         win.run_script("asena-dns-reload.ps1")
         win.notify(title, t("notify_dns_reloading"))

@@ -69,6 +69,8 @@ TRANSLATIONS = {
         "upd_check_fail": "Couldn't check (connection?).",
         "setup_running": "Setting up…",
         "setup_done": "Ready — in the system tray.",
+        "notify_apply_on_connect": "Asena is off — changes apply automatically when you connect.",
+        "notify_added_offline": "{domain} added — active automatically when you connect.",
     },
     "de": {
         "connect": "Verbinden",
@@ -111,6 +113,8 @@ TRANSLATIONS = {
         "upd_check_fail": "Prüfung fehlgeschlagen (Verbindung?).",
         "setup_running": "Wird eingerichtet…",
         "setup_done": "Bereit — im Infobereich.",
+        "notify_apply_on_connect": "Asena ist aus — Änderungen werden beim Verbinden übernommen.",
+        "notify_added_offline": "{domain} hinzugefügt — beim Verbinden automatisch aktiv.",
     },
     "es": {
         "connect": "Conectar",
@@ -153,6 +157,8 @@ TRANSLATIONS = {
         "upd_check_fail": "No se pudo comprobar (¿conexión?).",
         "setup_running": "Configurando…",
         "setup_done": "Listo — en la bandeja.",
+        "notify_apply_on_connect": "Asena está apagado — los cambios se aplican al conectar.",
+        "notify_added_offline": "{domain} añadido — activo automáticamente al conectar.",
     },
     "fr": {
         "connect": "Se connecter",
@@ -195,6 +201,8 @@ TRANSLATIONS = {
         "upd_check_fail": "Vérification impossible (connexion ?).",
         "setup_running": "Installation…",
         "setup_done": "Prêt — dans la barre d'état.",
+        "notify_apply_on_connect": "Asena est éteint — les changements s'appliquent à la connexion.",
+        "notify_added_offline": "{domain} ajouté — actif automatiquement à la connexion.",
     },
     "tr": {
         "connect": "Bağlan",
@@ -237,6 +245,8 @@ TRANSLATIONS = {
         "upd_check_fail": "Denetlenemedi (bağlantı?).",
         "setup_running": "Kuruluyor…",
         "setup_done": "Hazır — sistem tepsisinde.",
+        "notify_apply_on_connect": "Asena kapalı — değişiklikler bağlanınca otomatik uygulanır.",
+        "notify_added_offline": "{domain} eklendi — bağlanınca otomatik aktif olur.",
     },
 }
 
