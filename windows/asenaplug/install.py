@@ -16,6 +16,7 @@ from .paths import (
     INSTALL_DIR, SCRIPTS_DIR, USQUE_EXE, WINTUN_DLL, DNSPROXY_EXE,
     DATA_DIR, CONFIG_DIR, RUN_DIR, CONFIG_JSON, BLACKLIST_PATH, SETUP_FLAG, LOG_FILE,
     TASKS, APP_NAME,
+    LEGACY_CLEAN_FLAG, LEGACY_STARTUP_VBS, LEGACY_TASKS,
 )
 
 APP_EXE = INSTALL_DIR / f"{APP_NAME}.exe"
@@ -177,6 +178,54 @@ def launch_installed():
         subprocess.Popen([str(APP_EXE)])
     except Exception as e:
         log(f"kurulu exe başlatılamadı: {e}")
+
+
+def cleanup_legacy():
+    """Eski warp-tray (rebrand öncesi) artıklarını temizle. Her açılışta çağrılır;
+    idempotent. VBS silme ucuz (dosya op) → HER SEFERİNDE (logon'daki 'dosya
+    bulunamadı' hatasını bitirir). Eski görev kaldırma powershell ister →
+    flag ile TEK SEFER. Autostart artık AsenaPlug_Tray görevinde."""
+    # 1) Startup'taki eski VBS'i sil — silinmiş warp-tray.pyw'yi çağırıp hata veriyor
+    try:
+        startup = (Path(os.environ.get("APPDATA", "")) /
+                   "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup")
+        for name in LEGACY_STARTUP_VBS:
+            try:
+                (startup / name).unlink()
+            except FileNotFoundError:
+                pass
+    except Exception as e:
+        log(f"eski VBS silinemedi: {e}")
+
+    # 2) Eski WarpTray_* görevlerini kaldır (bir kez; flag)
+    if LEGACY_CLEAN_FLAG.exists():
+        return
+    try:
+        ps = "\n".join(
+            f"Unregister-ScheduledTask -TaskName '{t}' -Confirm:$false "
+            f"-ErrorAction SilentlyContinue" for t in LEGACY_TASKS
+        )
+        subprocess.run(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-Command", ps],
+            check=False, capture_output=True, creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        log(f"eski görevler kaldırılamadı: {e}")
+
+    # 3) Kuruluysa yeni görevleri garanti et: eski VBS sürümünden gelen kullanıcıda
+    #    AsenaPlug_Tray hiç olmayabilir → autostart hiç çalışmaz. Yeniden kaydet.
+    #    (Fresh install'da run_setup zaten _register_tasks çağırır; burada atlanır.)
+    if SETUP_FLAG.exists():
+        try:
+            _register_tasks()
+        except Exception as e:
+            log(f"görevler garanti edilemedi (legacy): {e}")
+
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        LEGACY_CLEAN_FLAG.touch()
+    except Exception as e:
+        log(f"legacy flag yazılamadı: {e}")
 
 
 def _tray_launch():
