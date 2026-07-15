@@ -428,8 +428,8 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QInputDialog,
 )
-from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QPen, QBrush, QPixmap, QFont
-from PySide6.QtCore import QTimer, Qt, QRect
+from PySide6.QtGui import QIcon, QAction, QActionGroup, QPainter, QColor, QPen, QBrush, QPixmap, QFont
+from PySide6.QtCore import QTimer, Qt, QRect, QLocale
 
 ASENA_OFF = ["sudo", "-n", "/usr/local/bin/asena-off"]
 BYPASS_RELOAD = ["sudo", "-n", "/usr/local/bin/asena-bypass-reload"]
@@ -438,6 +438,213 @@ CONF_PATH = Path.home() / ".config" / "asena-route.conf"
 BLACKLIST_PATH = Path.home() / ".config" / "asena-blacklist.txt"
 SLICE_NAME = "asena-only.slice"
 SLICE_PROCS = None  # resolved at startup
+
+# ------------------------------------------------------------------ i18n
+# Hafif çoklu dil (Windows asenaplug/i18n.py ile aynı mantık): dict tabanlı,
+# runtime dil değişimi, eksik çeviri EN'e -> key'e düşer. Aktif dil kalıcı
+# (~/.config/asena-lang). İlk açılışta OS dili (QLocale; listede yoksa 'en').
+LANG_FILE = Path.home() / ".config" / "asena-lang"
+LANGUAGES = [
+    ("en", "English"), ("de", "Deutsch"), ("es", "Español"),
+    ("fr", "Français"), ("tr", "Türkçe"),
+]
+TRANSLATIONS = {
+    "en": {
+        "disconnect": "Disconnect", "force_asena": "Force through Asena",
+        "blacklist_menu": "Blacklist", "language": "Language", "quit": "Quit",
+        "bypass_through": "Through Asena:",
+        "bypass_iface_item": "  ✓ {name}  (iface)",
+        "bypass_app_item": "  ✓ {short}  (app: {exe})",
+        "bypass_add_iface": "Add interface…", "bypass_add_app": "Add running app",
+        "bypass_no_apps": "(no running graphical apps)", "bypass_refresh": "Refresh",
+        "dlg_iface_title": "Add interface to Force Asena",
+        "dlg_iface_label": "Interface name (e.g. waydroid0):",
+        "bypass_already": "{name} already in list",
+        "notify_added_to_asena": "Added to Asena: {name}",
+        "notify_removed_from_asena": "Removed from Asena: {name}",
+        "bypass_iface_added_body": "Interface traffic now goes through Asena.",
+        "bypass_iface_removed_body": "Interface now uses the normal internet.",
+        "bypass_app_restart": "Restart the app for full effect.",
+        "bl_count": "{n} domains saved", "bl_edit": "Edit…",
+        "bl_add": "Add domain…", "bl_reload": "Reload DNS",
+        "dlg_add_title": "Add domain to blacklist",
+        "dlg_add_label": "Domain (e.g. example.com):",
+        "notify_title_blacklist": "Blacklist",
+        "notify_exists": "{domain} already exists.",
+        "notify_added": "{domain} added. Use 'Reload DNS' to activate.",
+        "notify_open_first": "Open Asena first — DNS can't reload while off.",
+        "notify_dns_reloading": "Reloading DNS…",
+        "tip_connected": "{app}: Connected ({detail})",
+        "tip_disconnected": "{app}: Disconnected",
+        "notify_connected": "Connected ({detail})", "notify_disconnected": "Disconnected",
+    },
+    "de": {
+        "disconnect": "Trennen", "force_asena": "Über Asena erzwingen",
+        "blacklist_menu": "Blacklist", "language": "Sprache", "quit": "Beenden",
+        "bypass_through": "Über Asena:",
+        "bypass_iface_item": "  ✓ {name}  (iface)",
+        "bypass_app_item": "  ✓ {short}  (app: {exe})",
+        "bypass_add_iface": "Schnittstelle hinzufügen…",
+        "bypass_add_app": "Laufende App hinzufügen",
+        "bypass_no_apps": "(keine laufenden grafischen Apps)", "bypass_refresh": "Aktualisieren",
+        "dlg_iface_title": "Schnittstelle zu Über Asena hinzufügen",
+        "dlg_iface_label": "Schnittstellenname (z. B. waydroid0):",
+        "bypass_already": "{name} ist bereits in der Liste",
+        "notify_added_to_asena": "Zu Asena hinzugefügt: {name}",
+        "notify_removed_from_asena": "Von Asena entfernt: {name}",
+        "bypass_iface_added_body": "Schnittstellenverkehr läuft jetzt über Asena.",
+        "bypass_iface_removed_body": "Schnittstelle nutzt jetzt das normale Internet.",
+        "bypass_app_restart": "Starte die App neu für volle Wirkung.",
+        "bl_count": "{n} Domains gespeichert", "bl_edit": "Bearbeiten…",
+        "bl_add": "Domain hinzufügen…", "bl_reload": "DNS neu laden",
+        "dlg_add_title": "Domain zur Blacklist hinzufügen",
+        "dlg_add_label": "Domain (z. B. example.com):",
+        "notify_title_blacklist": "Blacklist",
+        "notify_exists": "{domain} ist bereits vorhanden.",
+        "notify_added": "{domain} hinzugefügt. Mit 'DNS neu laden' aktivieren.",
+        "notify_open_first": "Öffne zuerst Asena — DNS lädt nicht, wenn aus.",
+        "notify_dns_reloading": "DNS wird neu geladen…",
+        "tip_connected": "{app}: Verbunden ({detail})",
+        "tip_disconnected": "{app}: Getrennt",
+        "notify_connected": "Verbunden ({detail})", "notify_disconnected": "Getrennt",
+    },
+    "es": {
+        "disconnect": "Desconectar", "force_asena": "Forzar por Asena",
+        "blacklist_menu": "Lista negra", "language": "Idioma", "quit": "Salir",
+        "bypass_through": "Por Asena:",
+        "bypass_iface_item": "  ✓ {name}  (iface)",
+        "bypass_app_item": "  ✓ {short}  (app: {exe})",
+        "bypass_add_iface": "Añadir interfaz…", "bypass_add_app": "Añadir app en ejecución",
+        "bypass_no_apps": "(no hay apps gráficas en ejecución)", "bypass_refresh": "Actualizar",
+        "dlg_iface_title": "Añadir interfaz a Forzar por Asena",
+        "dlg_iface_label": "Nombre de interfaz (p. ej. waydroid0):",
+        "bypass_already": "{name} ya está en la lista",
+        "notify_added_to_asena": "Añadido a Asena: {name}",
+        "notify_removed_from_asena": "Eliminado de Asena: {name}",
+        "bypass_iface_added_body": "El tráfico de la interfaz ahora pasa por Asena.",
+        "bypass_iface_removed_body": "La interfaz ahora usa el internet normal.",
+        "bypass_app_restart": "Reinicia la app para efecto completo.",
+        "bl_count": "{n} dominios guardados", "bl_edit": "Editar…",
+        "bl_add": "Añadir dominio…", "bl_reload": "Recargar DNS",
+        "dlg_add_title": "Añadir dominio a la lista negra",
+        "dlg_add_label": "Dominio (p. ej. example.com):",
+        "notify_title_blacklist": "Lista negra",
+        "notify_exists": "{domain} ya existe.",
+        "notify_added": "{domain} añadido. Usa 'Recargar DNS' para activar.",
+        "notify_open_first": "Abre Asena primero — el DNS no se recarga si está apagado.",
+        "notify_dns_reloading": "Recargando DNS…",
+        "tip_connected": "{app}: Conectado ({detail})",
+        "tip_disconnected": "{app}: Desconectado",
+        "notify_connected": "Conectado ({detail})", "notify_disconnected": "Desconectado",
+    },
+    "fr": {
+        "disconnect": "Se déconnecter", "force_asena": "Forcer via Asena",
+        "blacklist_menu": "Liste noire", "language": "Langue", "quit": "Quitter",
+        "bypass_through": "Via Asena :",
+        "bypass_iface_item": "  ✓ {name}  (iface)",
+        "bypass_app_item": "  ✓ {short}  (app: {exe})",
+        "bypass_add_iface": "Ajouter une interface…", "bypass_add_app": "Ajouter une app active",
+        "bypass_no_apps": "(aucune app graphique active)", "bypass_refresh": "Actualiser",
+        "dlg_iface_title": "Ajouter une interface à Forcer via Asena",
+        "dlg_iface_label": "Nom de l'interface (ex. waydroid0) :",
+        "bypass_already": "{name} est déjà dans la liste",
+        "notify_added_to_asena": "Ajouté à Asena : {name}",
+        "notify_removed_from_asena": "Retiré d'Asena : {name}",
+        "bypass_iface_added_body": "Le trafic de l'interface passe désormais par Asena.",
+        "bypass_iface_removed_body": "L'interface utilise désormais l'internet normal.",
+        "bypass_app_restart": "Redémarrez l'app pour un effet complet.",
+        "bl_count": "{n} domaines enregistrés", "bl_edit": "Modifier…",
+        "bl_add": "Ajouter un domaine…", "bl_reload": "Recharger le DNS",
+        "dlg_add_title": "Ajouter un domaine à la liste noire",
+        "dlg_add_label": "Domaine (ex. example.com) :",
+        "notify_title_blacklist": "Liste noire",
+        "notify_exists": "{domain} existe déjà.",
+        "notify_added": "{domain} ajouté. Utilisez « Recharger le DNS » pour activer.",
+        "notify_open_first": "Ouvrez d'abord Asena — le DNS ne se recharge pas hors ligne.",
+        "notify_dns_reloading": "Rechargement du DNS…",
+        "tip_connected": "{app} : Connecté ({detail})",
+        "tip_disconnected": "{app} : Déconnecté",
+        "notify_connected": "Connecté ({detail})", "notify_disconnected": "Déconnecté",
+    },
+    "tr": {
+        "disconnect": "Bağlantıyı kes", "force_asena": "Asena'a zorla",
+        "blacklist_menu": "Blacklist", "language": "Dil", "quit": "Çıkış",
+        "bypass_through": "Asena'tan geçen:",
+        "bypass_iface_item": "  ✓ {name}  (iface)",
+        "bypass_app_item": "  ✓ {short}  (app: {exe})",
+        "bypass_add_iface": "Arayüz ekle…", "bypass_add_app": "Çalışan uygulama ekle",
+        "bypass_no_apps": "(çalışan grafik uygulama yok)", "bypass_refresh": "Yenile",
+        "dlg_iface_title": "Asena'a zorla listesine arayüz ekle",
+        "dlg_iface_label": "Arayüz adı (örn. waydroid0):",
+        "bypass_already": "{name} zaten listede",
+        "notify_added_to_asena": "Asena'a eklendi: {name}",
+        "notify_removed_from_asena": "Asena'tan çıkarıldı: {name}",
+        "bypass_iface_added_body": "Arayüz trafiği artık Asena'tan geçiyor.",
+        "bypass_iface_removed_body": "Arayüz artık normal internete gidiyor.",
+        "bypass_app_restart": "Tam etkili olması için uygulamayı yeniden başlat.",
+        "bl_count": "{n} domain kayıtlı", "bl_edit": "Düzenle…",
+        "bl_add": "Domain ekle…", "bl_reload": "DNS yenile",
+        "dlg_add_title": "Blacklist'e domain ekle",
+        "dlg_add_label": "Domain (örn: example.com):",
+        "notify_title_blacklist": "Blacklist",
+        "notify_exists": "{domain} zaten mevcut.",
+        "notify_added": "{domain} eklendi. 'DNS yenile' ile aktif et.",
+        "notify_open_first": "Önce Asena'ı aç — kapalıyken DNS yenilenmez.",
+        "notify_dns_reloading": "DNS yenileniyor…",
+        "tip_connected": "{app}: Bağlı ({detail})",
+        "tip_disconnected": "{app}: Bağlı değil",
+        "notify_connected": "Bağlandı ({detail})", "notify_disconnected": "Bağlantı kesildi",
+    },
+}
+_LANG = "en"
+
+
+def _lang_get():
+    return _LANG
+
+
+def _lang_set(code):
+    global _LANG
+    if code in TRANSLATIONS:
+        _LANG = code
+
+
+def _lang_save(code):
+    try:
+        LANG_FILE.write_text(code, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _lang_load():
+    try:
+        c = LANG_FILE.read_text(encoding="utf-8").strip()
+        return c if c in TRANSLATIONS else None
+    except OSError:
+        return None
+
+
+def _lang_init(os_lang):
+    """Kayıtlı dil varsa onu; yoksa OS dilini (listede yoksa 'en') seç + kaydet."""
+    saved = _lang_load()
+    if saved:
+        _lang_set(saved)
+    else:
+        _lang_set(os_lang if os_lang in TRANSLATIONS else "en")
+        _lang_save(_LANG)
+
+
+def t(key, **kw):
+    """Aktif dilde çeviri; eksikse EN; o da yoksa key. Parametreler .format ile."""
+    s = TRANSLATIONS.get(_LANG, {}).get(key)
+    if s is None:
+        s = TRANSLATIONS["en"].get(key, key)
+    if kw:
+        try:
+            s = s.format(**kw)
+        except (KeyError, IndexError, ValueError):
+            pass
+    return s
 
 
 def asena_on_cmd(mode: str) -> list[str]:
@@ -676,6 +883,9 @@ class AsenaTray:
         self.app = QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)
 
+        # Dil: kayıtlı varsa onu; yoksa OS dilini (listede yoksa 'en') seç + kaydet
+        _lang_init(QLocale.system().name().split("_")[0])
+
         # Tray host (SNI/StatusNotifierWatcher) hazır olana dek bekle: host gelir
         # gelmez kaydol -> hem fallback pencere olmaz hem daha erken register olup
         # tepside daha iyi (taşmayan) bir sıra kapar. En fazla ~15sn.
@@ -692,35 +902,7 @@ class AsenaTray:
         self.tray.setIcon(self.icon_off)
         self.tray.activated.connect(self._on_click)
 
-        self.menu = QMenu()
-        self.disconnect_action = QAction("Disconnect")
-        self.disconnect_action.triggered.connect(self.disconnect)
-
-        self.http2_action = QAction("HTTP/2")
-        self.http2_action.setCheckable(True)
-        self.http2_action.triggered.connect(lambda: self.set_mode("http2"))
-
-        self.http3_action = QAction("HTTP/3")
-        self.http3_action.setCheckable(True)
-        self.http3_action.triggered.connect(lambda: self.set_mode("http3"))
-
-        self.bypass_menu = QMenu("Force Asena")
-        self.blacklist_menu = QMenu("Blacklist")
-
-        quit_action = QAction("Quit")
-        quit_action.triggered.connect(self.app.quit)
-
-        self.menu.addAction(self.disconnect_action)
-        self.menu.addSeparator()
-        self.menu.addAction(self.http2_action)
-        self.menu.addAction(self.http3_action)
-        self.menu.addSeparator()
-        self.menu.addMenu(self.bypass_menu)
-        self.menu.addMenu(self.blacklist_menu)
-        self.menu.addSeparator()
-        self.menu.addAction(quit_action)
-        self.tray.setContextMenu(self.menu)
-        self.menu.aboutToShow.connect(self._rebuild_menus)
+        self._build_menu()
 
         self._last_mode: str | None = None
         self._initialized = False
@@ -731,6 +913,63 @@ class AsenaTray:
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh)
         self.timer.start(3000)
+
+    # -------- Menu (yeniden kurulabilir: dil değişince etiketler güncellenir)
+
+    def _build_menu(self):
+        self.menu = QMenu()
+        self.disconnect_action = QAction(t("disconnect"))
+        self.disconnect_action.triggered.connect(self.disconnect)
+
+        self.http2_action = QAction("HTTP/2")   # teknik etiket — çevrilmez
+        self.http2_action.setCheckable(True)
+        self.http2_action.triggered.connect(lambda: self.set_mode("http2"))
+
+        self.http3_action = QAction("HTTP/3")
+        self.http3_action.setCheckable(True)
+        self.http3_action.triggered.connect(lambda: self.set_mode("http3"))
+
+        self.bypass_menu = QMenu(t("force_asena"))
+        self.blacklist_menu = QMenu(t("blacklist_menu"))
+
+        # Dil alt menüsü (çıkışın hemen üstünde) — her dil KENDİ adıyla, aktif işaretli
+        self.language_menu = QMenu(t("language"))
+        self.language_group = QActionGroup(self.language_menu)
+        self.language_group.setExclusive(True)
+        cur = _lang_get()
+        for code, native in LANGUAGES:
+            a = QAction(native, self.language_menu)
+            a.setCheckable(True)
+            a.setChecked(code == cur)
+            a.triggered.connect(lambda _=False, x=code: self.choose_language(x))
+            self.language_group.addAction(a)
+            self.language_menu.addAction(a)
+
+        self.quit_action = QAction(t("quit"))
+        self.quit_action.triggered.connect(self.app.quit)
+
+        self.menu.addAction(self.disconnect_action)
+        self.menu.addSeparator()
+        self.menu.addAction(self.http2_action)
+        self.menu.addAction(self.http3_action)
+        self.menu.addSeparator()
+        self.menu.addMenu(self.bypass_menu)
+        self.menu.addMenu(self.blacklist_menu)
+        self.menu.addSeparator()
+        self.menu.addMenu(self.language_menu)
+        self.menu.addSeparator()
+        self.menu.addAction(self.quit_action)
+        self.tray.setContextMenu(self.menu)
+        self.menu.aboutToShow.connect(self._rebuild_menus)
+        self._rebuild_menus()
+
+    def choose_language(self, code):
+        if code == _lang_get():
+            return
+        _lang_set(code)
+        _lang_save(code)
+        self._build_menu()   # tüm etiketleri yeni dille yeniden üret
+        self.refresh()       # tooltip/ikon güncelle
 
     # -------- Asena toggle
 
@@ -770,12 +1009,12 @@ class AsenaTray:
             return
         conf = read_conf()
         if name in conf["iface"]:
-            notify("Force Asena", f"{name} already in list")
+            notify(t("force_asena"), t("bypass_already", name=name))
             return
         conf["iface"].append(name)
         write_conf(conf)
         subprocess.Popen(BYPASS_RELOAD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        notify(f"Asena'a eklendi: {name}", "Interface trafiği artik Asena'tan geciyor.")
+        notify(t("notify_added_to_asena", name=name), t("bypass_iface_added_body"))
         QTimer.singleShot(500, self.rebuild_bypass_menu)
 
     def remove_iface(self, name: str):
@@ -785,7 +1024,7 @@ class AsenaTray:
         conf["iface"].remove(name)
         write_conf(conf)
         subprocess.Popen(BYPASS_RELOAD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        notify(f"Asena'tan cikarildi: {name}", "Interface artik normal internete gidiyor.")
+        notify(t("notify_removed_from_asena", name=name), t("bypass_iface_removed_body"))
         QTimer.singleShot(500, self.rebuild_bypass_menu)
 
     def add_app(self, exe_path: str, pid: int | None = None):
@@ -803,8 +1042,8 @@ class AsenaTray:
                     add_pid_to_slice(p)
         name = Path(exe_path).name
         notify(
-            f"Asena'a eklendi: {name}",
-            "Tam etkili olması icin uygulamayı yeniden baslat.",
+            t("notify_added_to_asena", name=name),
+            t("bypass_app_restart"),
         )
         QTimer.singleShot(500, self.rebuild_bypass_menu)
 
@@ -819,8 +1058,8 @@ class AsenaTray:
                 remove_pid_from_slice(pid)
         name = Path(exe_path).name
         notify(
-            f"Asena'tan cikarildi: {name}",
-            "Tam etkili olması icin uygulamayı yeniden baslat.",
+            t("notify_removed_from_asena", name=name),
+            t("bypass_app_restart"),
         )
         QTimer.singleShot(500, self.rebuild_bypass_menu)
 
@@ -842,21 +1081,21 @@ class AsenaTray:
         conf = read_conf()
 
         if conf["iface"] or conf["app"]:
-            hdr = self.bypass_menu.addAction("Through Asena:")
+            hdr = self.bypass_menu.addAction(t("bypass_through"))
             hdr.setEnabled(False)
             for name in conf["iface"]:
-                a = self.bypass_menu.addAction(f"  ✓ {name}  (iface)")
+                a = self.bypass_menu.addAction(t("bypass_iface_item", name=name))
                 a.triggered.connect(lambda _=False, n=name: self.remove_iface(n))
             for exe in conf["app"]:
                 short = Path(exe).name
-                a = self.bypass_menu.addAction(f"  ✓ {short}  (app: {exe})")
+                a = self.bypass_menu.addAction(t("bypass_app_item", short=short, exe=exe))
                 a.triggered.connect(lambda _=False, e=exe: self.remove_app(e))
             self.bypass_menu.addSeparator()
 
-        add_if = self.bypass_menu.addAction("Add interface…")
+        add_if = self.bypass_menu.addAction(t("bypass_add_iface"))
         add_if.triggered.connect(self.prompt_add_iface)
 
-        add_app_menu = self.bypass_menu.addMenu("Add running app")
+        add_app_menu = self.bypass_menu.addMenu(t("bypass_add_app"))
         clients = hyprland_clients()
         bypassed_exes = set(conf["app"])
         any_added = False
@@ -869,14 +1108,14 @@ class AsenaTray:
             a.triggered.connect(lambda _=False, e=c["exe"], p=c["pid"]: self.add_app(e, p))
             any_added = True
         if not any_added:
-            empty = add_app_menu.addAction("(no running graphical apps)")
+            empty = add_app_menu.addAction(t("bypass_no_apps"))
             empty.setEnabled(False)
 
-        refresh = self.bypass_menu.addAction("Refresh")
+        refresh = self.bypass_menu.addAction(t("bypass_refresh"))
         refresh.triggered.connect(self.rebuild_bypass_menu)
 
     def prompt_add_iface(self):
-        name, ok = QInputDialog.getText(None, "Add interface to Force Asena", "Interface name (e.g. waydroid0):")
+        name, ok = QInputDialog.getText(None, t("dlg_iface_title"), t("dlg_iface_label"))
         if ok and name.strip():
             self.add_iface(name.strip())
 
@@ -895,17 +1134,17 @@ class AsenaTray:
                 if l.strip() and not l.strip().startswith("#")
             ]
             count = len(lines)
-        info = self.blacklist_menu.addAction(f"{count} domain kayıtlı")
+        info = self.blacklist_menu.addAction(t("bl_count", n=count))
         info.setEnabled(False)
         self.blacklist_menu.addSeparator()
 
-        edit_action = self.blacklist_menu.addAction("Düzenle…")
+        edit_action = self.blacklist_menu.addAction(t("bl_edit"))
         edit_action.triggered.connect(self.open_blacklist_editor)
 
-        add_action = self.blacklist_menu.addAction("Domain ekle…")
+        add_action = self.blacklist_menu.addAction(t("bl_add"))
         add_action.triggered.connect(self.prompt_add_domain)
 
-        reload_action = self.blacklist_menu.addAction("DNS yenile")
+        reload_action = self.blacklist_menu.addAction(t("bl_reload"))
         reload_action.triggered.connect(self.reload_dns)
 
     def open_blacklist_editor(self):
@@ -916,7 +1155,7 @@ class AsenaTray:
         )
 
     def prompt_add_domain(self):
-        domain, ok = QInputDialog.getText(None, "Blacklist'e domain ekle", "Domain (örn: example.com):")
+        domain, ok = QInputDialog.getText(None, t("dlg_add_title"), t("dlg_add_label"))
         if not ok or not domain.strip():
             return
         domain = domain.strip().lstrip("*").lstrip(".")
@@ -925,21 +1164,22 @@ class AsenaTray:
         BLACKLIST_PATH.touch(exist_ok=True)
         existing = BLACKLIST_PATH.read_text()
         if domain in existing.splitlines():
-            notify("Blacklist", f"{domain} zaten mevcut.")
+            notify(t("notify_title_blacklist"), t("notify_exists", domain=domain))
             return
         with BLACKLIST_PATH.open("a") as f:
             if existing and not existing.endswith("\n"):
                 f.write("\n")
             f.write(domain + "\n")
-        notify("Blacklist", f"{domain} eklendi. DNS yenile ile aktif et.")
+        notify(t("notify_title_blacklist"), t("notify_added", domain=domain))
         self.rebuild_blacklist_menu()
 
     def reload_dns(self):
+        bl_title = f"Asena {t('notify_title_blacklist')}"
         if current_mode() is None:
-            notify("Asena Blacklist", "Önce Asena'ı aç — kapalıyken DNS yenilenmez.")
+            notify(bl_title, t("notify_open_first"))
             return
         subprocess.Popen(DNS_RELOAD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        notify("Asena Blacklist", "DNS yenileniyor…")
+        notify(bl_title, t("notify_dns_reloading"))
 
     # -------- Polling
 
@@ -948,11 +1188,12 @@ class AsenaTray:
         active = mode is not None
 
         if active:
+            detail = mode.upper().replace("HTTP", "HTTP/")
             self.tray.setIcon(self.icon_on)
-            self.tray.setToolTip(f"Asena: Connected ({mode.upper().replace('HTTP', 'HTTP/')})")
+            self.tray.setToolTip(t("tip_connected", app="Asena", detail=detail))
         else:
             self.tray.setIcon(self.icon_off)
-            self.tray.setToolTip("Asena: Disconnected")
+            self.tray.setToolTip(t("tip_disconnected", app="Asena"))
 
         self.disconnect_action.setEnabled(active)
         self.http2_action.setChecked(mode == "http2")
@@ -975,10 +1216,10 @@ class AsenaTray:
 
         if self._initialized and mode != self._last_mode:
             if mode is None:
-                body = "Disconnected"
+                body = t("notify_disconnected")
                 icon = "network-offline"
             else:
-                body = f"Connected ({mode.upper().replace('HTTP', 'HTTP/')})"
+                body = t("notify_connected", detail=mode.upper().replace("HTTP", "HTTP/"))
                 icon = "network-vpn"
             notify("Asena", body, icon)
         self._last_mode = mode
