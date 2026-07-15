@@ -8,7 +8,7 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
-$ProgramFilesDir = Join-Path $env:ProgramFiles "usque"
+$ProgramFilesDir = Join-Path $env:ProgramFiles "AsenaPlug"
 
 # 1. Teardown (NRPT, firewall, route, DNS reset, usque/dnsproxy durdur)
 $off = Join-Path $PSScriptRoot "asena-off.ps1"
@@ -30,11 +30,11 @@ Stop-Process -Name "usque", "dnsproxy" -Force -ErrorAction SilentlyContinue
 # 4. Masaüstü kısayolu
 Remove-Item (Join-Path $env:USERPROFILE "Desktop\AsenaPlug.lnk") -Force -ErrorAction SilentlyContinue
 
-# 5. Program dosyaları (Program Files\usque)
+# 5. Program dosyaları (Program Files\AsenaPlug)
 Remove-Item $ProgramFilesDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "AsenaPlug kaldırıldı." -ForegroundColor Green
 Write-Host "Asena kimliğin (config.json) burada KORUNDU:" -ForegroundColor Yellow
-Write-Host "  $env:ProgramData\usque\config\config.json"
+Write-Host "  $env:ProgramData\AsenaPlug\config\config.json"
 Write-Host "Tamamen silmek istersen (kimlik dahil, yedekle!):"
-Write-Host "  Remove-Item '$env:ProgramData\usque' -Recurse -Force"
+Write-Host "  Remove-Item '$env:ProgramData\AsenaPlug' -Recurse -Force"

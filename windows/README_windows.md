@@ -36,7 +36,7 @@ cd windows
 .\build.ps1            # builds dist\AsenaPlug.exe (with the wolf icon)
 .\dist\AsenaPlug.exe   # first run: UAC -> setup -> tray
 ```
-On first run the exe **copies itself to `C:\Program Files\usque\AsenaPlug.exe`**, makes a **desktop shortcut**, and auto-starts at logon from there — so you can delete `dist\`. Only one tray runs at a time.
+On first run the exe **copies itself to `C:\Program Files\AsenaPlug\AsenaPlug.exe`**, makes a **desktop shortcut**, and auto-starts at logon from there — so you can delete `dist\`. Only one tray runs at a time.
 
 > **Update:** quit the running tray (**Exit**), then run the new `dist\AsenaPlug.exe` (as admin) → it copies itself to Program Files. Your settings/blacklist/identity are **preserved** (setup runs once; only code is refreshed).
 
@@ -48,8 +48,8 @@ pythonw .\AsenaPlug.pyw
 ```
 
 First run (admin) does:
-1. `usque.exe` + `wintun.dll` + `dnsproxy.exe` → `C:\Program Files\usque\`
-2. PowerShell scripts → `C:\Program Files\usque\scripts\`
+1. `usque.exe` + `wintun.dll` + `dnsproxy.exe` → `C:\Program Files\AsenaPlug\`
+2. PowerShell scripts → `C:\Program Files\AsenaPlug\scripts\`
 3. ACL on `%ProgramData%\usque` (user tray writes config, SYSTEM reads)
 4. Task Scheduler tasks: `AsenaPlug_Tray` (elevated tray at logon), `AsenaPlug_RouteSync` (SYSTEM daemon), `AsenaPlug_Rescue` (boot/logon cleanup)
 5. `usque register` → `%ProgramData%\usque\config\config.json` (**back this up!**)
@@ -74,13 +74,13 @@ First run (admin) does:
 ### Uninstall
 **Admin PowerShell** (one command — first tears down cleanly: NRPT, IPv6 firewall, routes, DNS; then removes tasks/shortcut/files):
 ```powershell
-& "C:\Program Files\usque\scripts\asena-uninstall.ps1"
+& "C:\Program Files\AsenaPlug\scripts\asena-uninstall.ps1"
 ```
 > Deleting the folder while connected is **wrong**: NRPT rules linger and blacklisted domains point at a dead `127.0.0.2` (won't resolve). The script prevents this.
 
 Your identity (`config.json`) is kept. To remove everything (back it up first!):
 ```powershell
-Remove-Item "C:\ProgramData\usque" -Recurse -Force
+Remove-Item "C:\ProgramData\AsenaPlug" -Recurse -Force
 ```
 
 ### License
@@ -116,7 +116,7 @@ cd windows
 .\build.ps1            # dist\AsenaPlug.exe üretir (kurt ikonlu)
 .\dist\AsenaPlug.exe   # ilk çalıştırma: UAC -> kurulum -> tray
 ```
-İlk çalıştırmada exe **kendini `C:\Program Files\usque\AsenaPlug.exe`'ye kopyalar**, **masaüstü kısayolu** yapar ve logon'da oradan otomatik başlar — `dist\`'i silebilirsin. Aynı anda tek tray çalışır.
+İlk çalıştırmada exe **kendini `C:\Program Files\AsenaPlug\AsenaPlug.exe`'ye kopyalar**, **masaüstü kısayolu** yapar ve logon'da oradan otomatik başlar — `dist\`'i silebilirsin. Aynı anda tek tray çalışır.
 
 > **Güncelleme:** çalışan tray'i **Çıkış**'tan kapat, sonra yeni `dist\AsenaPlug.exe`'yi (yönetici) çalıştır → kendini Program Files'a kopyalar. Ayarların/blacklist/kimliğin **korunur** (kurulum bir kez çalışır; sadece kod tazelenir).
 
@@ -128,8 +128,8 @@ pythonw .\AsenaPlug.pyw
 ```
 
 İlk çalıştırma (admin) şunları yapar:
-1. `usque.exe` + `wintun.dll` + `dnsproxy.exe` → `C:\Program Files\usque\`
-2. PowerShell scriptleri → `C:\Program Files\usque\scripts\`
+1. `usque.exe` + `wintun.dll` + `dnsproxy.exe` → `C:\Program Files\AsenaPlug\`
+2. PowerShell scriptleri → `C:\Program Files\AsenaPlug\scripts\`
 3. `%ProgramData%\usque`'ye ACL (kullanıcı tray config yazar, SYSTEM okur)
 4. Task Scheduler: `AsenaPlug_Tray` (logon'da elevated tray), `AsenaPlug_RouteSync` (SYSTEM daemon), `AsenaPlug_Rescue` (boot/logon temizlik)
 5. `usque register` → `%ProgramData%\usque\config\config.json` (**YEDEKLE!**)
@@ -154,13 +154,13 @@ pythonw .\AsenaPlug.pyw
 ### Kaldırma
 **Yönetici PowerShell** (tek komut — önce düzgün teardown: NRPT, IPv6 firewall, route, DNS; sonra görev/kısayol/dosya):
 ```powershell
-& "C:\Program Files\usque\scripts\asena-uninstall.ps1"
+& "C:\Program Files\AsenaPlug\scripts\asena-uninstall.ps1"
 ```
 > Bağlıyken klasörü silmek **yanlış**: NRPT kalır, blacklist domainleri ölü `127.0.0.2`'ye yönlenir (çözülmez). Script bunu önler.
 
 Kimliğin (`config.json`) korunur. Tamamen silmek için (yedekle!):
 ```powershell
-Remove-Item "C:\ProgramData\usque" -Recurse -Force
+Remove-Item "C:\ProgramData\AsenaPlug" -Recurse -Force
 ```
 
 ### Lisans

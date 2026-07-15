@@ -19,10 +19,10 @@ Set-StrictMode -Version 1.0
 $ErrorActionPreference = "Stop"
 
 # --- Yollar (hepsi paylaşılan ProgramData; SYSTEM + kullanıcı ortak) ---
-$InstallDir   = Join-Path $env:ProgramFiles "usque"
+$InstallDir   = Join-Path $env:ProgramFiles "AsenaPlug"
 $UsqueExe     = Join-Path $InstallDir "usque.exe"
 $DnsproxyExe  = Join-Path $InstallDir "dnsproxy.exe"
-$DataDir      = Join-Path $env:ProgramData "usque"
+$DataDir      = Join-Path $env:ProgramData "AsenaPlug"
 $ConfigDir    = Join-Path $DataDir "config"
 $RunDir       = Join-Path $DataDir "run"
 $LogFile      = Join-Path $DataDir "usque.log"
@@ -36,6 +36,7 @@ $ResolvedFile = Join-Path $RunDir "asena-resolved-ips.txt"        # route-sync i
 $RouteExe     = Join-Path $env:SystemRoot "System32\route.exe"    # /32 route (route.exe hızlı)
 
 $TunName      = "usque"
+$V6Rule       = "AsenaPlug-IPv6-FailClosed"
 $ListenDns    = "127.0.0.2"
 # dnsproxy upstream: sorgular Asena TÜNELİNDEN geçer (resolver IP'leri TUN'a
 # route'lanır) -> ISP zehirleyemez. Yandex:1253 düz-DNS artık TR'de zehirleniyordu.
@@ -72,6 +73,31 @@ if ($Scope)     { $scope     = $Scope }
 if ($transport -notin @("http2","http3")) { $transport = "http2" }
 if ($scope     -notin @("selective","full")) { $scope = "selective" }
 Write-Log "asena-on: transport=$transport scope=$scope (arg: '$Transport'/'$Scope')"
+
+# --- 0. Mod değişimi -> CLEAN SLATE (declarative) ---
+# Çalışan mod isteneni tutmuyorsa usque'yu öldür: TUN adapteri + üzerindeki TÜM
+# route'lar (split-default + yüzlerce /32) KENDİLİĞİNDEN uçar. DNS/NRPT/IPv6
+# artıklarını da temizle. Böylece "eski usque'ya bağlanma" ve "eski route artığı"
+# imkânsız olur; reconciler tek asena-on çağırır (off->on dansı YOK -> thrashing yok).
+$curState = $null
+if (Test-Path $StateFile) { try { $curState = Get-Content $StateFile -Raw | ConvertFrom-Json } catch {} }
+if ($curState -and (("$($curState.transport)" -ne $transport) -or ("$($curState.scope)" -ne $scope))) {
+    Write-Log "mod değişti ($($curState.transport)/$($curState.scope) -> $transport/$scope): clean slate"
+    Stop-ScheduledTask -TaskName "AsenaPlug_RouteSync" -ErrorAction SilentlyContinue
+    Stop-Process -Name "usque" -Force -ErrorAction SilentlyContinue
+    Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
+        Where-Object { $_.NameServers -contains $ListenDns } |
+        ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
+    Remove-NetFirewallRule -Group $V6Rule -ErrorAction SilentlyContinue
+    Remove-NetFirewallRule -Group "AsenaPlug-Full-IPv6Block" -ErrorAction SilentlyContinue
+    Remove-Item $StateFile -Force -ErrorAction SilentlyContinue
+    # TUN kaybolana dek bekle (route'lar uçsun -> temiz zemin), en fazla ~6sn
+    $w = 0
+    while ((Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue) -and $w -lt 24) {
+        Start-Sleep -Milliseconds 250; $w++
+    }
+    Write-Log "clean slate tamam (TUN indi)."
+}
 
 # --- 1. usque başlat ---
 $usque = Get-Process -Name "usque" -ErrorAction SilentlyContinue
