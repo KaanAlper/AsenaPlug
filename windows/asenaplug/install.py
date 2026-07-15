@@ -15,7 +15,8 @@ from . import win
 from .paths import (
     INSTALL_DIR, SCRIPTS_DIR, USQUE_EXE, WINTUN_DLL, DNSPROXY_EXE,
     DATA_DIR, CONFIG_DIR, RUN_DIR, CONFIG_JSON, BLACKLIST_PATH, SETUP_FLAG, LOG_FILE,
-    TASKS, APP_NAME,
+    TASKS, APP_NAME, APP_VERSION, VERSION_FILE,
+    LEGACY_CLEAN_FLAG, LEGACY_STARTUP_VBS, LEGACY_TASKS,
 )
 
 APP_EXE = INSTALL_DIR / f"{APP_NAME}.exe"
@@ -44,8 +45,51 @@ def bundle_path(relative: str) -> Path:
     return Path(base) / relative
 
 
+def _ver_tuple(s: str):
+    """'1.0.9' -> (1,0,9). Rakam yoksa (0,). (update.parse_version'ın PySide6'sız ikizi.)"""
+    import re
+    n = re.findall(r"\d+", s or "")
+    return tuple(int(x) for x in n) if n else (0,)
+
+
+def installed_version():
+    """Kurulu sürüm (version.txt), yoksa None."""
+    try:
+        return VERSION_FILE.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def _write_version():
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        VERSION_FILE.write_text(APP_VERSION, encoding="utf-8")
+    except OSError as e:
+        log(f"version.txt yazılamadı: {e}")
+
+
 def needs_setup() -> bool:
+    """İlk kurulum mu? version.txt yoksa first-run. (Eski kurulumda version.txt
+    yok ama SETUP_FLAG var → kurulu say, ilk açılışta version.txt yazılır.)"""
+    if installed_version() is not None:
+        return False
     return not SETUP_FLAG.exists()
+
+
+def needs_upgrade() -> bool:
+    """Kurulu ama exe sürümü daha yeni → binary/script tazele (kullanıcının
+    version.txt fikri: kurulu < açılan exe ise güncelle)."""
+    iv = installed_version()
+    if iv is None:
+        return False
+    return _ver_tuple(iv) < _ver_tuple(APP_VERSION)
+
+
+def apply_upgrade():
+    """Güncelleme sonrası: script/binary'leri tazele + version.txt'i güncelle."""
+    refresh_scripts()
+    install_self()
+    _write_version()
 
 
 def refresh_scripts():
@@ -121,6 +165,7 @@ def run_setup():
 
     # 8. Tamamlandı (autostart = AsenaPlug_Tray logon görevi, adım 5'te kuruldu)
     SETUP_FLAG.touch()
+    _write_version()          # kurulu sürümü işaretle (sonraki açılışta first-run/upgrade ayrımı)
 
 
 def _grant_users_modify(path: Path):
@@ -142,10 +187,26 @@ def install_self():
         src = Path(sys.executable)
         if src.resolve() != APP_EXE.resolve():
             INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, APP_EXE)
+            _copy_with_retry(src, APP_EXE)
     except Exception as e:
         log(f"exe Program Files'a kopyalanamadı (çalışan örnek olabilir): {e}")
     _create_desktop_shortcut()
+
+
+def _copy_with_retry(src: Path, dst: Path, attempts: int = 20, delay: float = 0.5):
+    """Güncellemede Program Files exe'yi çalışan (eski) tray kilitler. Yeni exe
+    kopyayı, eski tray kapanıp kilit kalkana dek (~10sn) birkaç kez dener."""
+    import time
+    last = None
+    for _ in range(attempts):
+        try:
+            shutil.copy2(src, dst)
+            return
+        except (PermissionError, OSError) as e:
+            last = e
+            time.sleep(delay)
+    if last:
+        raise last
 
 
 def _create_desktop_shortcut():
@@ -177,6 +238,54 @@ def launch_installed():
         subprocess.Popen([str(APP_EXE)])
     except Exception as e:
         log(f"kurulu exe başlatılamadı: {e}")
+
+
+def cleanup_legacy():
+    """Eski warp-tray (rebrand öncesi) artıklarını temizle. Her açılışta çağrılır;
+    idempotent. VBS silme ucuz (dosya op) → HER SEFERİNDE (logon'daki 'dosya
+    bulunamadı' hatasını bitirir). Eski görev kaldırma powershell ister →
+    flag ile TEK SEFER. Autostart artık AsenaPlug_Tray görevinde."""
+    # 1) Startup'taki eski VBS'i sil — silinmiş warp-tray.pyw'yi çağırıp hata veriyor
+    try:
+        startup = (Path(os.environ.get("APPDATA", "")) /
+                   "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup")
+        for name in LEGACY_STARTUP_VBS:
+            try:
+                (startup / name).unlink()
+            except FileNotFoundError:
+                pass
+    except Exception as e:
+        log(f"eski VBS silinemedi: {e}")
+
+    # 2) Eski WarpTray_* görevlerini kaldır (bir kez; flag)
+    if LEGACY_CLEAN_FLAG.exists():
+        return
+    try:
+        ps = "\n".join(
+            f"Unregister-ScheduledTask -TaskName '{t}' -Confirm:$false "
+            f"-ErrorAction SilentlyContinue" for t in LEGACY_TASKS
+        )
+        subprocess.run(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-Command", ps],
+            check=False, capture_output=True, creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        log(f"eski görevler kaldırılamadı: {e}")
+
+    # 3) Kuruluysa yeni görevleri garanti et: eski VBS sürümünden gelen kullanıcıda
+    #    AsenaPlug_Tray hiç olmayabilir → autostart hiç çalışmaz. Yeniden kaydet.
+    #    (Fresh install'da run_setup zaten _register_tasks çağırır; burada atlanır.)
+    if SETUP_FLAG.exists():
+        try:
+            _register_tasks()
+        except Exception as e:
+            log(f"görevler garanti edilemedi (legacy): {e}")
+
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        LEGACY_CLEAN_FLAG.touch()
+    except Exception as e:
+        log(f"legacy flag yazılamadı: {e}")
 
 
 def _tray_launch():

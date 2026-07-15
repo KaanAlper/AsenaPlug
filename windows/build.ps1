@@ -84,6 +84,8 @@ try {
         --hidden-import asenaplug.state `
         --hidden-import asenaplug.install `
         --hidden-import asenaplug.tray `
+        --hidden-import asenaplug.i18n `
+        --hidden-import asenaplug.update `
         --hidden-import winotify `
         "AsenaPlug.pyw"
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller başarısız (exit $LASTEXITCODE)" }

@@ -21,6 +21,7 @@ CONFIG_DIR    = DATA_DIR / "config"
 RUN_DIR       = DATA_DIR / "run"
 LOG_FILE      = DATA_DIR / "usque.log"
 SETUP_FLAG    = DATA_DIR / "installed.flag"
+VERSION_FILE  = DATA_DIR / "version.txt"     # kurulu sürüm — exe sürümüyle kıyas (first-run/upgrade)
 
 BLACKLIST_PATH = CONFIG_DIR / "asena-blacklist.txt"
 CONFIG_JSON    = CONFIG_DIR / "config.json"          # usque cihaz kimliği
@@ -33,6 +34,10 @@ TUN_NAME = "usque"
 # Kullanıcıya görünen uygulama adı (tray, bildirimler, exe). İç tanımlayıcılar
 # (usque yolları, AsenaPlug_* görevleri, asenaplug paketi) aynı kalır.
 APP_NAME = "AsenaPlug"
+
+# Sürüm — GitHub release tag'i (vX.Y.Z) ile karşılaştırılır. Her release'de artır.
+APP_VERSION = "1.0.0"
+GITHUB_REPO = "KaanAlper/AsenaPlug"
 
 # --- Varsayılan mod ---
 DEFAULT_TRANSPORT = "http2"      # DPI-stealth; TR'de dayanıklı
@@ -54,3 +59,14 @@ TASKS = {
     "route_sync": "AsenaPlug_RouteSync",
     "rescue":     "AsenaPlug_Rescue",
 }
+
+# --- Eski warp-tray artıkları (rebrand öncesi) — bir kez temizlenir ---
+# Eski sürüm autostart'ı Startup'taki bir VBS'e dayandırıyordu; rebrand'den sonra
+# VBS silinmiş warp-tray.pyw'yi çağırıp her logon'da "dosya bulunamadı" veriyor.
+LEGACY_CLEAN_FLAG = DATA_DIR / "legacy-cleaned.flag"
+LEGACY_STARTUP_VBS = ("warp-tray.vbs", "warp_tray.vbs")
+LEGACY_TASKS = (
+    "WarpTray_On_HTTP2", "WarpTray_On_HTTP3", "WarpTray_Off",
+    "WarpTray_BypassReload", "WarpTray_DnsReload",
+    "WarpTray_RouteSync", "WarpTray_Rescue", "WarpTray_Tray",
+)
