@@ -59,9 +59,11 @@ def main():
         # Kurulu ama exe sürümü daha yeni (ya da eski flag'li kurulum) → tazele + sürüm yaz
         install.apply_upgrade()
     else:
-        # Sürüm güncel: sadece scriptleri senkronla + exe'yi yerinde tut (no-op'a yakın)
-        install.refresh_scripts()
-        install.install_self()
+        # Sürüm güncel: RELEASE'te hiçbir kopyalama/PowerShell YAPMA — autostart hızlı
+        # kalsın (install_self->desktop shortcut PowerShell spawn'ı + script I/O'yu atla;
+        # zaten güncel). Dev modda (.pyw) scriptleri senkronla (kod değişikliği yansısın).
+        if not getattr(sys, "frozen", False):
+            install.refresh_scripts()
 
     # dist'ten çalışıyorsak Program Files'taki kurulu kopyaya DEVRET (aktif o olsun);
     # mutex'i tutmadan devret ki yeni süreç alabilsin.

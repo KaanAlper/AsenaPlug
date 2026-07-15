@@ -283,6 +283,7 @@ $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $a = New-ScheduledTaskAction -Execute '{exe}' {arg_part}
 $t = New-ScheduledTaskTrigger -AtLogOn -User $me
 $s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Days 3650) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+$s.Priority = 4   # default 7 (below-normal) -> 4: logon kalabalığında daha erken başlar
 $p = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Highest
 Register-ScheduledTask -TaskName '{TASKS["tray"]}' -Action $a -Trigger $t -Settings $s -Principal $p | Out-Null
 """)
