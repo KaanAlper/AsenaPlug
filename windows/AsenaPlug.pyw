@@ -55,15 +55,11 @@ def main():
 
     if install.needs_setup():
         _run_setup_visible()             # ilk kurulum — GÖRÜNÜR (toast + 'hazır' bildirimi)
-    elif install.needs_upgrade() or install.installed_version() is None:
-        # Kurulu ama exe sürümü daha yeni (ya da eski flag'li kurulum) → tazele + sürüm yaz
-        install.apply_upgrade()
     else:
-        # Sürüm güncel: RELEASE'te hiçbir kopyalama/PowerShell YAPMA — autostart hızlı
-        # kalsın (install_self->desktop shortcut PowerShell spawn'ı + script I/O'yu atla;
-        # zaten güncel). Dev modda (.pyw) scriptleri senkronla (kod değişikliği yansısın).
-        if not getattr(sys, "frozen", False):
-            install.refresh_scripts()
+        # Kurulu: exe FARKLI yerden çalışıyorsa (dist/update = yeni sürüm) kendini +
+        # scriptleri Program Files'a tazele; autostart'ta (Program Files exe) NO-OP
+        # -> hızlı açılış (PowerShell/I/O yok).
+        install.sync_installed()
 
     # dist'ten çalışıyorsak Program Files'taki kurulu kopyaya DEVRET (aktif o olsun);
     # mutex'i tutmadan devret ki yeni süreç alabilsin.

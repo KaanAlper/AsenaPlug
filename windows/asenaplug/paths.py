@@ -24,9 +24,6 @@ CONFIG_DIR    = DATA_DIR / "config"
 RUN_DIR       = DATA_DIR / "run"
 LOG_FILE      = DATA_DIR / "usque.log"
 SETUP_FLAG    = DATA_DIR / "installed.flag"
-# Kurulu sürüm işareti — çalışan exe'nin APP_VERSION'ı ile kıyaslanır (first-run/
-# upgrade ayrımı). Uygulama klasöründe (exe'nin yanında), ProgramData'da DEĞİL.
-VERSION_FILE  = INSTALL_DIR / "version.txt"
 
 BLACKLIST_PATH = CONFIG_DIR / "asena-blacklist.txt"
 CONFIG_JSON    = CONFIG_DIR / "config.json"          # usque cihaz kimliği
