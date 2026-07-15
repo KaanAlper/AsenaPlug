@@ -7,7 +7,7 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
-$DataDir   = Join-Path $env:ProgramData "usque"
+$DataDir   = Join-Path $env:ProgramData "AsenaPlug"
 $RunDir    = Join-Path $DataDir "run"
 $LogFile   = Join-Path $DataDir "usque.log"
 $StateFile = Join-Path $RunDir "state.json"

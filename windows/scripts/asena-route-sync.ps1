@@ -11,7 +11,7 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
-$DataDir       = Join-Path $env:ProgramData "usque"
+$DataDir       = Join-Path $env:ProgramData "AsenaPlug"
 $ConfigDir     = Join-Path $DataDir "config"
 $RunDir        = Join-Path $DataDir "run"
 $LogFile       = Join-Path $DataDir "usque.log"
@@ -30,7 +30,7 @@ $PruneAfter    = 600    # ~1 saat (6sn x 600); oturum boyunca IP'ler birikir
 $SleepSeconds  = 6
 # dnsproxy watchdog (selective modda sistem DNS 127.0.0.2'ye bağlı; dnsproxy
 # ölürse internet gider — ölmüşse yeniden başlat)
-$DnsproxyExe   = Join-Path (Join-Path $env:ProgramFiles "usque") "dnsproxy.exe"
+$DnsproxyExe   = Join-Path (Join-Path $env:ProgramFiles "AsenaPlug") "dnsproxy.exe"
 $ListenDns     = "127.0.0.2"
 $UpstreamDns1  = "1.1.1.1:53"
 $UpstreamDns2  = "1.0.0.1:53"

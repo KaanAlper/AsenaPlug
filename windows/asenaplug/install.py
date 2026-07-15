@@ -17,6 +17,7 @@ from .paths import (
     DATA_DIR, CONFIG_DIR, RUN_DIR, CONFIG_JSON, BLACKLIST_PATH, SETUP_FLAG, LOG_FILE,
     TASKS, APP_NAME, APP_VERSION, VERSION_FILE,
     LEGACY_CLEAN_FLAG, LEGACY_STARTUP_VBS, LEGACY_TASKS,
+    OLD_DATA_DIR,
 )
 
 APP_EXE = INSTALL_DIR / f"{APP_NAME}.exe"
@@ -114,8 +115,33 @@ def refresh_scripts():
         log(f"refresh_scripts atlandı (admin gerekebilir): {e}")
 
 
+def _migrate_from_usque():
+    """Eski 'usque' klasörlerinden yeni 'AsenaPlug'a taşı (rebrand migration).
+    config.json (cihaz KİMLİĞİ) + blacklist KESİNLİKLE korunur — yoksa yeniden
+    register gerekir. Bir kez; yeni veri klasörü zaten varsa atlanır.
+
+    NOT: usque->AsenaPlug migration SADECE bu sürüm serisinde gerekli. Herkes
+    geçtikten sonra (bir sonraki majör) bu fonksiyon + OLD_* sabitleri + legacy
+    temizlik kaldırılabilir. (Kullanıcı isteği: 'sonraki sürümde silelim'.)"""
+    if DATA_DIR.exists() or not OLD_DATA_DIR.exists():
+        return
+    try:
+        old_cfg = OLD_DATA_DIR / "config" / "config.json"
+        old_bl = OLD_DATA_DIR / "config" / "asena-blacklist.txt"
+        if old_cfg.exists() or old_bl.exists():
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            if old_cfg.exists():
+                shutil.copy2(old_cfg, CONFIG_JSON)      # KİMLİK — kritik
+            if old_bl.exists():
+                shutil.copy2(old_bl, BLACKLIST_PATH)
+            log("usque->AsenaPlug migration: config.json + blacklist taşındı")
+    except Exception as e:
+        log(f"usque->AsenaPlug migration atlandı: {e}")
+
+
 def run_setup():
     """Admin gerektirir. Tüm kurulum adımlarını sırayla yapar."""
+    _migrate_from_usque()      # eski usque verisini (kimlik!) yeni klasöre taşı — dizinlerden ÖNCE
     # 1. Dizinler
     for d in (INSTALL_DIR, SCRIPTS_DIR, DATA_DIR, CONFIG_DIR, RUN_DIR):
         d.mkdir(parents=True, exist_ok=True)

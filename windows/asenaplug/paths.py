@@ -3,20 +3,27 @@
 ÖNEMLİ: Scriptler Task Scheduler ile SYSTEM olarak çalışır. SYSTEM'in
 %APPDATA% / %USERPROFILE%'ı kullanıcınınkinden farklıdır. Bu yüzden hem
 kullanıcı (tray) hem SYSTEM (scriptler) tarafından okunan/yazılan TÜM
-config %ProgramData%\\usque altında tutulur (setup ACL ile yazılabilir yapar).
+config %ProgramData%\\AsenaPlug altında tutulur (setup ACL ile yazılabilir yapar).
+
+NOT: Klasör adları AsenaPlug (marka). Dosya adları usque.exe/wintun.dll ve TUN
+adaptör adı "usque" DEĞİŞMEZ — onlar 3.parti usque tool'a aittir.
 """
 import os
 from pathlib import Path
 
 # --- Program dosyaları (binary + script) ---
-INSTALL_DIR  = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "usque"
+INSTALL_DIR  = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "AsenaPlug"
 SCRIPTS_DIR  = INSTALL_DIR / "scripts"
 USQUE_EXE    = INSTALL_DIR / "usque.exe"
 WINTUN_DLL   = INSTALL_DIR / "wintun.dll"
 DNSPROXY_EXE = INSTALL_DIR / "dnsproxy.exe"
 
-# --- Paylaşılan veri (%ProgramData%\usque) — kullanıcı + SYSTEM ortak ---
-DATA_DIR      = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "usque"
+# --- Paylaşılan veri (%ProgramData%\AsenaPlug) — kullanıcı + SYSTEM ortak ---
+DATA_DIR      = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AsenaPlug"
+
+# --- Eski (rebrand öncesi) "usque" klasörleri — migration için ---
+OLD_INSTALL_DIR = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "usque"
+OLD_DATA_DIR    = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "usque"
 CONFIG_DIR    = DATA_DIR / "config"
 RUN_DIR       = DATA_DIR / "run"
 LOG_FILE      = DATA_DIR / "usque.log"

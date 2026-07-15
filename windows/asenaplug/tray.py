@@ -126,7 +126,7 @@ class AsenaTray:
         self._initialized = False
         # --- reconciler durumu (tek hedef, tek timer; thrashing yok) ---
         self._goal = None        # (transport, scope) = bağlan; "off" = kes; None = boşta
-        self._phase = None       # en son verilen komut: "on" | "off" | None
+        self._issued = None      # bu hedef için komut verildi mi (issue-once)
         self._phase_ticks = 0
         self._reconciling = False
 
@@ -368,62 +368,55 @@ class AsenaTray:
     def _begin_reconcile(self):
         if not self._reconciling:
             self._reconciling = True
-            self._phase = None
+            self._issued = None
             self._phase_ticks = 0
             self._reconcile()
 
     @staticmethod
-    def _decide(goal, cur, phase):
-        """Saf karar: (hedef, mevcut durum, son faz) -> eylem. Yan etkisiz => test edilebilir.
+    def _decide(goal, cur):
+        """Saf karar: hedefe ulaşıldı mı, değilse hangi komut? Yan etkisiz (test edilebilir).
+        asena-on DECLARATIVE — mod değişince usque'yu kendi içinde restart eder
+        (clean slate). Bu yüzden 'yanlış modda bağlı' -> yine 'on' (off->on DANSI YOK).
           goal: (transport, scope) | 'off' | None ;  cur: state dict | None
-        Döner:
-          'done' — hedefe ulaşıldı
-          'on'   — asena-on ver (kapalı, hedefe aç)
-          'off'  — asena-off ver (kapatılmalı: kesme ya da yanlış modda bağlı)
-          'wait' — komut zaten verildi (phase eşleşiyor), gelmesini bekle"""
+        Döner: 'done' | 'on' | 'off'."""
         if goal is None:
             return "done"
-        connected = cur is not None
         if goal == "off":
-            if not connected:
-                return "done"
-            return "wait" if phase == "off" else "off"
-        # goal = (transport, scope)
-        if connected and (cur["transport"], cur["scope"]) == goal:
+            return "done" if cur is None else "off"
+        if cur is not None and (cur["transport"], cur["scope"]) == goal:
             return "done"
-        if connected:                    # yanlış modda bağlı -> önce kapat
-            return "wait" if phase == "off" else "off"
-        return "wait" if phase == "on" else "on"   # kapalı -> hedefle aç
+        return "on"
 
     def _reconcile(self):
         self.refresh()
         goal = self._goal
-        action = self._decide(goal, state.current_state(), self._phase)
+        action = self._decide(goal, state.current_state())
 
         if action == "done":
             self._reconciling = False
-            self._phase = None
+            self._issued = None
             self.refresh()               # son durumu bildir (reconcile bitti)
             return
 
-        # Komut SADECE faz değişiminde verilir ('wait' => tekrar verme, thrashing yok)
-        if action == "on":
-            win.run_script("asena-on.ps1", args=["-Transport", goal[0], "-Scope", goal[1]])
-            self._phase = "on"
-            self._phase_ticks = 0
-        elif action == "off":
-            win.run_script("asena-off.ps1")
-            self._phase = "off"
+        # ISSUE-ONCE: her HEDEF için komut BİR kez verilir. Aynı hedefe tekrar
+        # asena-on/off gönderilmez -> thrashing imkânsız. Hedef değişirse
+        # (_issued != goal) yeni komut verilir. Mod değişimini asena-on kendi
+        # içinde atomik yapar (usque restart + clean slate), o yüzden off->on yok.
+        if self._issued != goal:
+            if action == "off":
+                win.run_script("asena-off.ps1")
+            else:
+                win.run_script("asena-on.ps1", args=["-Transport", goal[0], "-Scope", goal[1]])
+            self._issued = goal
             self._phase_ticks = 0
 
-        # Timeout: faz takılırsa vazgeç (asena-on/off gelmedi). "on" daha uzun:
-        # asena-on artık eager warm-up (blacklist'i çöz+route) yapıyor, connect
-        # meşru olarak ~10-25sn sürebilir -> erken timeout vermesin.
+        # Timeout: asena-on/off beklenen sürede sonuç vermezse vazgeç. asena-on mod
+        # değişince clean-slate usque restart + warm-up yapar -> ~35sn'ye kadar meşru.
         self._phase_ticks += 1
-        limit = 60 if self._phase == "on" else 24     # ~30s / ~12s (500ms tik)
+        limit = 70 if goal != "off" else 30     # ~35s / ~15s (500ms tik)
         if self._phase_ticks > limit:
             self._reconciling = False
-            self._phase = None
+            self._issued = None
             win.notify(APP_NAME, t("notify_timeout"))
             self.refresh()
             return

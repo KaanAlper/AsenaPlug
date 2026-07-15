@@ -9,13 +9,13 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
-$DataDir      = Join-Path $env:ProgramData "usque"
+$DataDir      = Join-Path $env:ProgramData "AsenaPlug"
 $ConfigDir    = Join-Path $DataDir "config"
 $RunDir       = Join-Path $DataDir "run"
 $LogFile      = Join-Path $DataDir "usque.log"
 $BlacklistTxt = Join-Path $ConfigDir "asena-blacklist.txt"
 $ResolvedFile = Join-Path $RunDir "asena-resolved-ips.txt"
-$DnsproxyExe  = Join-Path (Join-Path $env:ProgramFiles "usque") "dnsproxy.exe"
+$DnsproxyExe  = Join-Path (Join-Path $env:ProgramFiles "AsenaPlug") "dnsproxy.exe"
 $TunName      = "usque"
 $V6Rule       = "AsenaPlug-IPv6-FailClosed"
 $ListenDns    = "127.0.0.2"

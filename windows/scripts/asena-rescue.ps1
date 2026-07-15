@@ -8,7 +8,7 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
-$DataDir   = Join-Path $env:ProgramData "usque"
+$DataDir   = Join-Path $env:ProgramData "AsenaPlug"
 $LogFile   = Join-Path $DataDir "usque.log"
 $TunName   = "usque"
 $V6Rule    = "AsenaPlug-IPv6-FailClosed"
