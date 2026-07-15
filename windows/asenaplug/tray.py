@@ -288,6 +288,11 @@ class AsenaTray:
 
     def _on_update_result(self, res):
         if res is None:
+            # AĞ HATASI (bağlıyken erişilemedi) — 'en güncel' DEĞİL 'denetlenemedi'
+            if not self._upd_silent:
+                win.notify(APP_NAME, t("upd_check_fail"))
+            return
+        if res == update.UP_TO_DATE:
             if not self._upd_silent:
                 win.notify(APP_NAME, t("upd_none"))
             return
