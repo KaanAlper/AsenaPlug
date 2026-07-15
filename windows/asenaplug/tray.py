@@ -429,9 +429,9 @@ class AsenaTray:
             self._phase_ticks = 0
 
         # Timeout: asena-on/off beklenen sürede sonuç vermezse vazgeç. asena-on mod
-        # değişince clean-slate usque restart + warm-up yapar -> ~35sn'ye kadar meşru.
+        # değişince clean-slate usque restart yapabilir -> ~30sn'ye kadar meşru.
         self._phase_ticks += 1
-        limit = 70 if goal != "off" else 30     # ~35s / ~15s (500ms tik)
+        limit = 60 if goal != "off" else 30     # ~30s / ~15s (500ms tik)
         if self._phase_ticks > limit:
             self._reconciling = False
             self._issued = None
