@@ -9,6 +9,9 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
+# Ortak mantık (blacklist parse + dnsproxy args) — asena-on ile TEK kaynak
+. (Join-Path $PSScriptRoot 'asena-common.ps1')
+
 $DataDir      = Join-Path $env:ProgramData "AsenaPlug"
 $ConfigDir    = Join-Path $DataDir "config"
 $RunDir       = Join-Path $DataDir "run"
@@ -49,16 +52,8 @@ Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
     Where-Object { $_.NameServers -contains $ListenDns } |
     ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
 
-# Blacklist oku
-$domains = @()
-if (Test-Path $BlacklistTxt) {
-    $domains = Get-Content $BlacklistTxt |
-        ForEach-Object { ($_ -replace '#.*', '').Trim() } |
-        Where-Object { $_ -ne '' } |
-        ForEach-Object { (($_ -replace '^\*\.', '') -replace ':\d+.*$', '').TrimEnd('.').ToLower() } |
-        Where-Object { $_ -match '^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$' } |
-        Sort-Object -Unique
-}
+# Blacklist oku (ortak parse)
+$domains = @(Get-BlacklistDomains $BlacklistTxt)
 
 if ($domains.Count -eq 0) {
     Stop-Process -Name "dnsproxy" -Force -ErrorAction SilentlyContinue
@@ -70,10 +65,9 @@ if ($domains.Count -eq 0) {
 if (-not (Get-Process -Name "dnsproxy" -ErrorAction SilentlyContinue)) {
     if (Test-Path $DnsproxyExe) {
         # Cache PIN — asena-on/route-sync ile AYNI (tarayıcı/route-sync uyuşmazlığı yok)
-        Start-Process -FilePath $DnsproxyExe -ArgumentList @(
-            "-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2,
-            "--cache", "--cache-optimistic", "--cache-min-ttl=600", "--cache-size=4194304"
-        ) -NoNewWindow -ErrorAction SilentlyContinue
+        Start-Process -FilePath $DnsproxyExe `
+            -ArgumentList (Get-DnsproxyArgs $ListenDns $UpstreamDns1 $UpstreamDns2) `
+            -NoNewWindow -ErrorAction SilentlyContinue
     }
 }
 $ok = $false; $tries = 0
@@ -91,38 +85,14 @@ if ($ok) {
             Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
         New-NetRoute -DestinationPrefix "$r/32" -InterfaceAlias $TunName -RouteMetric 1 -ErrorAction SilentlyContinue | Out-Null
     }
-    $ns = @($domains | ForEach-Object { "." + $_ })
+    # Hem apex ("site.com") hem subdomain (".site.com") — asena-on ile aynı gerekçe
+    $ns = @($domains | ForEach-Object { $_; "." + $_ })
     Add-DnsClientNrptRule -Namespace $ns -NameServers $ListenDns -ErrorAction SilentlyContinue
 
-    # Eager warm-up: /32 route'lar yukarıda temizlendi -> ŞİMDİ yeniden çöz+route et
-    # (route-sync'in ilk turunu bekleme). asena-on ile aynı; blacklist değişikliği de
-    # 'tak diye' uygulanır. dnsproxy cache'i primelenir -> tarayıcı aynı route'lu IP'yi alır.
-    $tunIdxWarm = $tun.InterfaceIndex
-    [System.Threading.ThreadPool]::SetMinThreads(256, 256) | Out-Null
-    $wtasks = @{}
-    foreach ($dom in $domains) {
-        try { $wtasks[$dom] = [System.Net.Dns]::GetHostAddressesAsync($dom) } catch {}
-    }
-    if ($wtasks.Count -gt 0) {
-        try { [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]@($wtasks.Values), 8000) | Out-Null } catch {}
-    }
-    $warmIps = @{}
-    foreach ($dom in $wtasks.Keys) {
-        $t = $wtasks[$dom]
-        if ($t.Status -ne 'RanToCompletion' -or -not $t.Result) { continue }
-        foreach ($a in $t.Result) {
-            if ($a.AddressFamily -eq 'InterNetwork') { $warmIps[$a.ToString()] = $true }
-        }
-    }
-    foreach ($ip in $warmIps.Keys) {
-        & $RouteExe -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdxWarm 2>$null | Out-Null
-    }
-    if ($warmIps.Count -gt 0) {
-        $warmIps.Keys | Sort-Object | Set-Content $ResolvedFile -Encoding UTF8
-    }
-
+    # /32 route'ları route-sync ARKA PLANDA yeniden kurar (yukarıda temizlendi).
+    # Bloklamaz -> DNS yenile hızlı döner; route'lar arka planda dolar.
     Start-ScheduledTask -TaskName "AsenaPlug_RouteSync" -ErrorAction SilentlyContinue
-    Write-Log "tamam — $($domains.Count) domain NRPT, warm-up $($warmIps.Count) IP route'landı, route-sync başlatıldı."
+    Write-Log "tamam — $($domains.Count) domain NRPT, route-sync (arka plan) başlatıldı."
 } else {
     Write-Log "UYARI: dnsproxy dinlemedi — NRPT eklenmedi."
 }

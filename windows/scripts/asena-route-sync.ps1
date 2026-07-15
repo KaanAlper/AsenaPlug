@@ -11,6 +11,9 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
+# Ortak mantık (blacklist parse + dnsproxy args) — asena-on ile TEK kaynak
+. (Join-Path $PSScriptRoot 'asena-common.ps1')
+
 $DataDir       = Join-Path $env:ProgramData "AsenaPlug"
 $ConfigDir     = Join-Path $DataDir "config"
 $RunDir        = Join-Path $DataDir "run"
@@ -77,10 +80,9 @@ while ($true) {
     # ARGÜMANLAR asena-on ile AYNI olmalı (cache PIN) — yoksa watchdog restart'ında
     # cache sıfırlanır, tarayıcı/route-sync uyuşmazlığı geri gelir.
     if ((Test-Path $DnsproxyExe) -and -not (Get-Process -Name dnsproxy -ErrorAction SilentlyContinue)) {
-        Start-Process -FilePath $DnsproxyExe -ArgumentList @(
-            "-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2,
-            "--cache", "--cache-optimistic", "--cache-min-ttl=600", "--cache-size=4194304"
-        ) -NoNewWindow -ErrorAction SilentlyContinue
+        Start-Process -FilePath $DnsproxyExe `
+            -ArgumentList (Get-DnsproxyArgs $ListenDns $UpstreamDns1 $UpstreamDns2) `
+            -NoNewWindow -ErrorAction SilentlyContinue
         Write-Log "dnsproxy düşmüştü, yeniden başlatıldı (watchdog)"
     }
 
@@ -91,15 +93,7 @@ while ($true) {
         }
     }
 
-    $domains = @()
-    if (Test-Path $BlacklistTxt) {
-        $domains = Get-Content $BlacklistTxt |
-            ForEach-Object { ($_ -replace '#.*', '').Trim() } |
-            Where-Object { $_ -ne '' } |
-            ForEach-Object { (($_ -replace '^\*\.', '') -replace ':\d+.*$', '').TrimEnd('.').ToLower() } |
-            Where-Object { $_ -match '^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$' } |
-            Sort-Object -Unique
-    }
+    $domains = @(Get-BlacklistDomains $BlacklistTxt)
 
     $desiredV4 = @{}
     $v6set = New-Object System.Collections.Generic.HashSet[string]

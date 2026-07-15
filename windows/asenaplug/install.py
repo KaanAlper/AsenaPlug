@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import win
 from .paths import (
-    INSTALL_DIR, SCRIPTS_DIR, USQUE_EXE, WINTUN_DLL, DNSPROXY_EXE,
+    INSTALL_DIR, SCRIPTS_DIR, USQUE_EXE, WINTUN_DLL, DNSPROXY_EXE, KILLSWITCH_EXE,
     DATA_DIR, CONFIG_DIR, RUN_DIR, CONFIG_JSON, BLACKLIST_PATH, SETUP_FLAG, LOG_FILE,
     TASKS, APP_NAME,
 )
@@ -23,6 +23,7 @@ APP_EXE = INSTALL_DIR / f"{APP_NAME}.exe"
 CREATE_NO_WINDOW = 0x08000000
 
 SCRIPT_NAMES = [
+    "asena-common.ps1",   # ortak fonksiyonlar — diğerleri dot-source eder, İLK kopyalanmalı
     "asena-on.ps1", "asena-off.ps1", "asena-dns-reload.ps1",
     "asena-route-sync.ps1", "asena-rescue.ps1", "asena-uninstall.ps1",
 ]
@@ -81,7 +82,8 @@ def refresh_scripts():
                 shutil.copy2(src, SCRIPTS_DIR / ps)
         for fname, dst in (("usque.exe", USQUE_EXE),
                            ("wintun.dll", WINTUN_DLL),
-                           ("dnsproxy.exe", DNSPROXY_EXE)):
+                           ("dnsproxy.exe", DNSPROXY_EXE),
+                           ("asena-killswitch.exe", KILLSWITCH_EXE)):  # opsiyonel (Go derlemesi)
             if not dst.exists():
                 src = bundle_path(f"bundled/{fname}")
                 if src.exists():
@@ -107,6 +109,13 @@ def run_setup():
                 "windows/bundled/ içine koy ve tekrar build al."
             )
         shutil.copy2(src, dst)
+
+    # 2b. Kill-switch helper (OPSİYONEL): Go ile derlenmişse gelir. Yoksa kurulum
+    #     sürer, sadece kill-switch kullanılamaz (asena-common Enable-KillSwitch
+    #     'exe yok' loglar). Böylece Go olmadan da build/kurulum çalışır.
+    ks_src = bundle_path("bundled/asena-killswitch.exe")
+    if ks_src.exists() and ks_src.stat().st_size > 0:
+        shutil.copy2(ks_src, KILLSWITCH_EXE)
 
     # 3. Scriptler
     for ps in SCRIPT_NAMES:
@@ -135,9 +144,27 @@ def run_setup():
             encoding="utf-8",
         )
 
-    # 7. usque register (cihaz kimliği yoksa)
+    # 7. usque register (cihaz kimliği yoksa). Başarısızlık kurulumu DURDURMAZ:
+    #    tray connect öncesi ensure_registered() ile yeniden dener + bildirir.
     if not CONFIG_JSON.exists():
         _run_usque_register()
+
+    # 7b. En hızlı WARP endpoint'ini LOKAL ölç + config.json'a yaz (kullanıcıya özel;
+    #     sabit IP gömülmez). Best-effort: ağ yoksa/başarısızsa kurulum sürer, ilk
+    #     connect register endpoint'iyle çalışır, kullanıcı sonra menüden tarayabilir.
+    if CONFIG_JSON.exists():
+        try:
+            from . import endpoint
+            r = endpoint.optimize()
+            log(f"endpoint taraması: {r}" if r else "endpoint taraması: aday ulaşılamadı")
+        except Exception as e:
+            log(f"endpoint taraması atlandı: {e}")
+
+    # 7c. Cihaz kimliğini (config.json) diğer yerel kullanıcılara kapat (adım 4'teki
+    #     geniş grant'i miras yoluyla düzeltir). endpoint taramasından SONRA: dosya
+    #     kesin var + son yazımı da yapılmış.
+    if CONFIG_JSON.exists():
+        _protect_identity(CONFIG_JSON)
 
     # 8. Tamamlandı (autostart = AsenaPlug_Tray logon görevi, adım 5'te kuruldu)
     SETUP_FLAG.touch()
@@ -151,6 +178,33 @@ def _grant_users_modify(path: Path):
         )
     except Exception as e:
         log(f"icacls başarısız: {e}")
+
+
+def _protect_identity(path: Path):
+    """config.json WARP cihaz kimliği + özel anahtarı taşır. DATA_DIR'a verilen
+    Authenticated Users:Modify grant'i miras yoluyla bunu da her yerel kullanıcıya
+    okunur/yazılır yapıyordu. Tray HER ZAMAN elevated (Administrators) + SYSTEM
+    erişir; başka kimseye gerek yok. Mirası kes, yalnız Administrators+SYSTEM bırak."""
+    try:
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r",
+             "/grant:r", "*S-1-5-32-544:F",   # Administrators (elevated tray)
+             "/grant:r", "*S-1-5-18:F"],       # SYSTEM (scriptler)
+            check=False, capture_output=True, creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        log(f"config.json ACL sertleştirilemedi: {e}")
+
+
+def trim_log(max_bytes: int = 2_000_000, keep_lines: int = 500):
+    """usque.log append-only ve rotasyonsuz -> sınırsız büyür. Açılışta boyut
+    eşiğini aşarsa son satırları tutup kırp (best-effort)."""
+    try:
+        if LOG_FILE.exists() and LOG_FILE.stat().st_size > max_bytes:
+            lines = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-keep_lines:]
+            LOG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def install_self():
@@ -168,9 +222,11 @@ def install_self():
     _create_desktop_shortcut()
 
 
-def _copy_with_retry(src: Path, dst: Path, attempts: int = 20, delay: float = 0.5):
+def _copy_with_retry(src: Path, dst: Path, attempts: int = 60, delay: float = 0.5):
     """Güncellemede Program Files exe'yi çalışan (eski) tray kilitler. Yeni exe
-    kopyayı, eski tray kapanıp kilit kalkana dek (~10sn) birkaç kez dener."""
+    kopyayı, eski tray kapanıp kilit kalkana dek birkaç kez dener. Pencere ~30sn:
+    eski tray'in teardown süresinden (asena-off ~20sn) UZUN olmalı, yoksa kopya
+    başarısız olup güncelleme sessizce iptal olur (launch_installed eski exe'yi açar)."""
     import time
     last = None
     for _ in range(attempts):
@@ -240,11 +296,16 @@ def _register_tasks():
                 "$t2 = New-ScheduledTaskTrigger -AtLogOn\n"
             )
             register_trigger = "-Trigger @($t1,$t2) "
+        # route_sync bir daemon: çökerse blacklist bakımı reconnect'e kadar durur.
+        # Task Scheduler'a otomatik yeniden başlatma ver (rescue kısa ömürlü, gerekmez).
+        restart = ""
+        if name == TASKS["route_sync"]:
+            restart = "-RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) "
         target = SCRIPTS_DIR / script
         blocks.append(f"""
 Unregister-ScheduledTask -TaskName '{name}' -Confirm:$false -ErrorAction SilentlyContinue
 $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-ExecutionPolicy Bypass -WindowStyle Hidden -NonInteractive -File "{target}"'
-{trigger_line}$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit {limit} -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+{trigger_line}$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit {limit} {restart}-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $p = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 Register-ScheduledTask -TaskName '{name}' -Action $a {register_trigger}-Settings $s -Principal $p | Out-Null
 """)
@@ -273,7 +334,27 @@ Register-ScheduledTask -TaskName '{TASKS["tray"]}' -Action $a -Trigger $t -Setti
 
 def _run_usque_register():
     try:
-        # config.json'ı paylaşılan CONFIG_DIR'a yaz (SYSTEM task buradan okur)
-        subprocess.run([str(USQUE_EXE), "register"], cwd=str(CONFIG_DIR), check=True)
+        # config.json'ı paylaşılan CONFIG_DIR'a yaz (SYSTEM task buradan okur).
+        # stdin'e "y": register ToS onayı sorar; pencereli exe'de konsol yok,
+        # cevapsız kalırsa prompt EOF'la 'no' sayılıp sessizce başarısız oluyordu.
+        r = subprocess.run(
+            [str(USQUE_EXE), "register"], cwd=str(CONFIG_DIR),
+            input="y\n", text=True, capture_output=True, timeout=90,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        if r.returncode != 0 or not CONFIG_JSON.exists():
+            out = ((r.stderr or "") + (r.stdout or "")).strip()[-400:]
+            log(f"usque register başarısız (exit {r.returncode}): {out}")
     except Exception as e:
         log(f"usque register başarısız: {e} — elle: cd \"{CONFIG_DIR}\" && usque register")
+
+
+def ensure_registered() -> bool:
+    """Cihaz kimliği (config.json) yoksa kaydı dene. İlk kurulumda register
+    başarısız kalmış olabilir (ağ yok vb.) — SETUP_FLAG atıldığı için bir daha
+    denenmiyordu ve her connect 'config.json yok' ile sessizce timeout'a düşüyordu.
+    Tray, connect öncesi bunu çağırır; başarı = dosya gerçekten var."""
+    if CONFIG_JSON.exists():
+        return True
+    _run_usque_register()
+    return CONFIG_JSON.exists()

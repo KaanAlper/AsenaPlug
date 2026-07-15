@@ -24,6 +24,7 @@ Pick both from the tray menu:
 - Windows 10/11 x64 (setup needs admin / UAC)
 - Python 3.10+ **only when running from source** (not needed for the PyInstaller exe)
 - `PySide6`, `winotify` (pip) — bundled into the exe
+- [Go](https://go.dev) **only to build the optional kill-switch helper** — omit it and everything else still builds; the kill-switch is just unavailable
 
 `usque.exe`, `wintun.dll`, `dnsproxy.exe` **ship inside the repo** (`windows/bundled/`) — nothing is downloaded at runtime.
 
@@ -50,14 +51,42 @@ pythonw .\AsenaPlug.pyw
 First run (admin) does:
 1. `usque.exe` + `wintun.dll` + `dnsproxy.exe` → `C:\Program Files\AsenaPlug\`
 2. PowerShell scripts → `C:\Program Files\AsenaPlug\scripts\`
-3. ACL on `%ProgramData%\usque` (user tray writes config, SYSTEM reads)
+3. ACL on `%ProgramData%\AsenaPlug` (shared data; `config.json` is locked down to Administrators + SYSTEM so the WARP device key isn't readable by other local users)
 4. Task Scheduler tasks: `AsenaPlug_Tray` (elevated tray at logon), `AsenaPlug_RouteSync` (SYSTEM daemon), `AsenaPlug_Rescue` (boot/logon cleanup)
-5. `usque register` → `%ProgramData%\usque\config\config.json` (**back this up!**)
+5. `usque register` → `%ProgramData%\AsenaPlug\config\config.json` (**back this up!**)
+
+### The blue "Windows protected your PC" (SmartScreen) warning
+This is **expected for any unsigned open-source exe** — it is not a bug and cannot be fixed in code. Windows Defender SmartScreen warns on executables that are **not code-signed** and have **no download reputation** yet. Users can run it via **More info → Run anyway**, or unblock the file first:
+```powershell
+Unblock-File "$env:USERPROFILE\Downloads\AsenaPlug.exe"
+```
+> Note: because the CI bumps the version and produces a fresh binary on every push, SmartScreen reputation never accumulates while the exe stays unsigned — so the warning is *permanent* without signing.
+
+**To remove the warning for good, sign the exe** (ranked by cost):
+- **[SignPath.io Foundation](https://about.signpath.io/product/open-source)** — *free* code signing for open-source projects (this repo qualifies: public + MIT). Removes "unknown publisher"; SmartScreen reputation then builds over time.
+- **[Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/)** — ~$15/mo, Microsoft-backed, reputation builds faster.
+- **EV certificate** — ~$300–600/yr + hardware token, but **zero warning from day one**.
+
+**Free path — SignPath.io Foundation** (this is what the CI is wired for):
+1. Apply for the free OSS program at [signpath.org/open-source](https://signpath.org/open-source) and get the project approved (they review — a brand-new/small repo may take time or be declined).
+2. In the SignPath dashboard: create the project, set the *trusted build system* to GitHub Actions for this repo, add an artifact configuration + a signing policy.
+3. Add a repo **secret** `SIGNPATH_API_TOKEN`, and repo **variables** `SIGNPATH_ORG_ID`, `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_POLICY_SLUG`.
+4. Push to `main` → the release is signed automatically. The workflow **skips signing when `SIGNPATH_API_TOKEN` is absent**, so nothing breaks meanwhile.
+
+> SignPath issues an **OV**-class certificate, so "unknown publisher" goes away immediately but SmartScreen *reputation* still builds up over downloads/time (not instant like an EV cert).
+
+If you instead have a local certificate (any OV/EV), local builds sign directly:
+```powershell
+.\build.ps1 -CertThumbprint <your-cert-thumbprint>
+```
+The build already embeds proper version/publisher metadata (CompanyName, ProductName, version) so the UAC prompt and file properties show **AsenaPlug** instead of a blank publisher — a smaller trust signal that works even while unsigned.
 
 ### How it works
 - **Blacklist mode:** the system DNS is **not** touched. Only blacklisted domains are sent (via Windows **NRPT**) to a local `dnsproxy` whose upstream (`1.1.1.1`) is **routed through the tunnel** — so DNS answers can't be poisoned. Resolved IPs are routed through the tunnel (`route-sync`). Everything else uses your normal ISP DNS/route. IPv6 for blacklisted domains is **fail-closed** (firewall) so apps fall back to tunneled IPv4.
-- **Everything mode:** split-default (`0.0.0.0/1`+`128.0.0.0/1`) through the tunnel, endpoint pinned on the physical link (no loop), global IPv6 blocked (no leak; usque is IPv4-only).
+- **Everything mode:** split-default (`0.0.0.0/1`+`128.0.0.0/1`) through the tunnel, endpoint pinned on the physical link (no loop), global IPv6 blocked (no leak; usque is IPv4-only). **IPv4 is fail-*open* by default:** if usque crashes the split-default routes vanish with the TUN and traffic falls back to your ISP (internet stays up — the same philosophy as the rescue task).
+- **Kill-switch (optional, Everything mode only):** enable it from the tray to flip IPv4 to fail-*closed*. It's a small Go helper (`asena-killswitch.exe`) that holds a **WFP dynamic session** — permit filters for the TUN, usque, the WARP endpoint, LAN and DHCP, then block everything else (*permit-above-block* via WFP weights — the same technique Mullvad/WireGuard use, which a plain Windows Firewall rule can't do since Block always wins there). If the tunnel drops, non-tunnel traffic stops instead of leaking to your ISP. Because it's a **dynamic** session, **every filter is removed automatically the moment the helper process exits** — kill, crash, or power-loss-then-reboot — so the kill-switch **cannot brick your internet**. **Off by default.** Building the helper needs [Go](https://go.dev) on the build machine (CI installs it automatically; if `go` is absent everything else still builds and the kill-switch is simply unavailable).
 - **MTU/MSS** clamped (1260) so large packets fit the tunnel (otherwise pages load only partially).
+- **Fastest endpoint (per-user, local):** the closest Cloudflare WARP endpoint depends on your ISP/location, so at setup — and from the tray's **Speed up connection** item — AsenaPlug measures TCP latency to candidate WARP anycast IPs **on your own machine** and writes the fastest into `config.json` (`endpoint_v4`). Nothing is hard-coded or shared. If a chosen endpoint fails to bring the tunnel up, it auto-reverts to the registration default. (The tunnel's throughput ceiling itself is set by usque's `reno` QUIC congestion control and isn't tunable from here.)
 
 ### Architecture (Linux ↔ Windows)
 | Feature | Linux | Windows (this port) |
@@ -104,6 +133,7 @@ Tray menüsünden ikisini de seç:
 - Windows 10/11 x64 (kurulum admin / UAC ister)
 - Python 3.10+ **yalnız kaynaktan çalıştırırken** (PyInstaller exe için gerekmez)
 - `PySide6`, `winotify` (pip) — exe içine paketlenir
+- [Go](https://go.dev) **yalnız opsiyonel kill-switch helper'ını derlemek için** — koymazsan gerisi yine build olur, sadece kill-switch kullanılamaz
 
 `usque.exe`, `wintun.dll`, `dnsproxy.exe` **repo'da gömülü gelir** (`windows/bundled/`) — runtime'da hiçbir şey indirilmez.
 
@@ -130,14 +160,42 @@ pythonw .\AsenaPlug.pyw
 İlk çalıştırma (admin) şunları yapar:
 1. `usque.exe` + `wintun.dll` + `dnsproxy.exe` → `C:\Program Files\AsenaPlug\`
 2. PowerShell scriptleri → `C:\Program Files\AsenaPlug\scripts\`
-3. `%ProgramData%\usque`'ye ACL (kullanıcı tray config yazar, SYSTEM okur)
+3. `%ProgramData%\AsenaPlug`'a ACL (paylaşılan veri; `config.json` yalnız Administrators + SYSTEM'e kısıtlı — WARP cihaz anahtarı diğer yerel kullanıcılara okunmaz)
 4. Task Scheduler: `AsenaPlug_Tray` (logon'da elevated tray), `AsenaPlug_RouteSync` (SYSTEM daemon), `AsenaPlug_Rescue` (boot/logon temizlik)
-5. `usque register` → `%ProgramData%\usque\config\config.json` (**YEDEKLE!**)
+5. `usque register` → `%ProgramData%\AsenaPlug\config\config.json` (**YEDEKLE!**)
+
+### Mavi "Windows bilgisayarınızı korudu" (SmartScreen) uyarısı
+Bu, **imzasız her açık kaynak exe için normaldir** — kod hatası değildir ve kodda düzeltilemez. Windows Defender SmartScreen, **code-signing imzası olmayan** ve henüz **indirme itibarı bulunmayan** exe'lere uyarı verir. Kullanıcı **Ek bilgi → Yine de çalıştır** ile açabilir; ya da dosyanın engelini önce kaldırabilir:
+```powershell
+Unblock-File "$env:USERPROFILE\Downloads\AsenaPlug.exe"
+```
+> Not: CI her push'ta sürümü artırıp yeni binary ürettiği için, exe imzasız kaldıkça SmartScreen itibarı hiç birikmez — yani imzalamadan uyarı *kalıcıdır*.
+
+**Uyarıyı tamamen kaldırmak için exe'yi imzala** (maliyete göre):
+- **[SignPath.io Foundation](https://about.signpath.io/product/open-source)** — açık kaynak projelere *ücretsiz* code signing (bu repo uygun: public + MIT). "Bilinmeyen yayıncı"yı kaldırır; SmartScreen itibarı zamanla oluşur.
+- **[Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/)** — ~15$/ay, Microsoft imzalı, itibar daha hızlı gelir.
+- **EV sertifikası** — ~300-600$/yıl + donanım token, ama **ilk günden sıfır uyarı**.
+
+**Ücretsiz yol — SignPath.io Foundation** (CI bunun için bağlı):
+1. [signpath.org/open-source](https://signpath.org/open-source)'tan ücretsiz OSS programına başvur ve projeyi onaylat (inceliyorlar — yeni/küçük repo zaman alabilir ya da reddedilebilir).
+2. SignPath panelinde: projeyi oluştur, bu repo için *trusted build system*'i GitHub Actions yap, bir artifact yapılandırması + signing policy ekle.
+3. Repo'ya **secret** `SIGNPATH_API_TOKEN`, **variable** olarak `SIGNPATH_ORG_ID`, `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_POLICY_SLUG` ekle.
+4. `main`'e push → release otomatik imzalanır. `SIGNPATH_API_TOKEN` yoksa workflow **imzalamayı atlar**, bu sırada hiçbir şey bozulmaz.
+
+> SignPath **OV** sınıfı sertifika verir; "bilinmeyen yayıncı" hemen kalkar ama SmartScreen *itibarı* yine indirmelerle/zamanla oluşur (EV gibi anında değil).
+
+Elinde yerel bir sertifika (OV/EV) varsa yerel build doğrudan imzalar:
+```powershell
+.\build.ps1 -CertThumbprint <sertifika-thumbprint>
+```
+Build zaten düzgün sürüm/yayıncı metadata'sı (CompanyName, ProductName, sürüm) gömüyor; böylece UAC dialogu ve dosya özelliklerinde boş yayıncı yerine **AsenaPlug** görünür — imzasızken bile işe yarayan küçük bir güven sinyali.
 
 ### Nasıl çalışır
 - **Blacklist modu:** sistem DNS'ine **dokunulmaz**. Sadece blacklist domainleri Windows **NRPT** ile yerel `dnsproxy`'ye gider; onun upstream'i (`1.1.1.1`) **tünelden** sorulur → DNS zehirlenemez. Çözülen IP'ler tünele route edilir (`route-sync`). Gerisi normal ISP DNS/route kullanır. Blacklist domainlerinin IPv6'sı **fail-closed** (firewall) → uygulama tünelli IPv4'e düşer.
-- **Her şey modu:** split-default (`0.0.0.0/1`+`128.0.0.0/1`) tünelden, endpoint fiziksel'de pinli (loop yok), global IPv6 bloklu (leak yok; usque IPv4-only).
+- **Her şey modu:** split-default (`0.0.0.0/1`+`128.0.0.0/1`) tünelden, endpoint fiziksel'de pinli (loop yok), global IPv6 bloklu (leak yok; usque IPv4-only). **IPv4 varsayılan fail-*open*:** usque çökerse split-default route'lar TUN'la birlikte uçar ve trafik ISP'ne düşer (internet ayakta kalır — rescue göreviyle aynı felsefe).
+- **Kill-switch (opsiyonel, sadece Her şey modu):** tepsiden aç → IPv4 fail-*closed* olur. Küçük bir Go helper'ı (`asena-killswitch.exe`) bir **WFP dynamic session** tutar: TUN / usque / WARP endpoint / LAN / DHCP'ye izin, gerisine blok (*permit-above-block* — WFP ağırlıklarıyla; Mullvad/WireGuard'ın yöntemi. Sıradan Windows Firewall bunu yapamaz çünkü orada Block hep kazanır). Tünel düşerse tünelsiz trafik ISP'ye sızmak yerine durur. **Dynamic** oturum olduğu için **helper süreci ölür ölmez tüm filtreler otomatik silinir** — kill, çökme veya güç kesintisi+reboot — yani kill-switch **internetini brick'leyemez**. **Varsayılan kapalı.** Helper'ı derlemek için build makinesinde [Go](https://go.dev) gerekir (CI otomatik kurar; `go` yoksa gerisi yine build olur, sadece kill-switch kullanılamaz).
 - **MTU/MSS** clamp (1260) → büyük paketler tünele sığar (yoksa sayfalar yarım yüklenir).
+- **En hızlı endpoint (kullanıcıya özel, lokal):** en yakın Cloudflare WARP endpoint'i ISP'ne/konumuna göre değişir; bu yüzden kurulumda — ve tepsideki **Bağlantıyı hızlandır** ile — AsenaPlug aday WARP anycast IP'lerine TCP gecikmesini **kendi makinende** ölçüp en hızlısını `config.json`'a (`endpoint_v4`) yazar. Hiçbir IP gömülü/paylaşımlı değildir. Seçilen endpoint tüneli açamazsa kayıt varsayılanına otomatik döner. (Tünelin throughput tavanını usque'nun `reno` QUIC congestion control'ü belirler; bu buradan ayarlanamaz.)
 
 ### Mimari (Linux ↔ Windows)
 | Özellik | Linux | Windows (bu port) |

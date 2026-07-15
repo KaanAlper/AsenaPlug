@@ -17,6 +17,7 @@ SCRIPTS_DIR  = INSTALL_DIR / "scripts"
 USQUE_EXE    = INSTALL_DIR / "usque.exe"
 WINTUN_DLL   = INSTALL_DIR / "wintun.dll"
 DNSPROXY_EXE = INSTALL_DIR / "dnsproxy.exe"
+KILLSWITCH_EXE = INSTALL_DIR / "asena-killswitch.exe"   # WFP kill-switch (opsiyonel, full mod)
 
 # --- Paylaşılan veri (%ProgramData%\AsenaPlug) — kullanıcı + SYSTEM ortak ---
 DATA_DIR      = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AsenaPlug"
@@ -42,7 +43,10 @@ APP_VERSION = "1.0.0"
 GITHUB_REPO = "KaanAlper/AsenaPlug"
 
 # --- Varsayılan mod ---
-DEFAULT_TRANSPORT = "http2"      # DPI-stealth; TR'de dayanıklı
+# http3 (QUIC/UDP): daha hızlı. asena-on, UDP 443 bloklu ağda TUN gelmezse otomatik
+# http2'ye (TCP+TLS) düşer -> "h3 hızı, olmazsa h2 sağlamlığı". Sabitçe http2 istersen
+# bunu "http2" yap. (Kullanıcının kayıtlı seçimi desired.json'da; bu yalnız yeni kurulum.)
+DEFAULT_TRANSPORT = "http3"
 DEFAULT_SCOPE     = "selective"  # fiziksel default, sadece blacklist Asena'tan
 
 TRANSPORTS = ("http2", "http3")

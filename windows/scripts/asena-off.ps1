@@ -7,6 +7,9 @@
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "SilentlyContinue"
 
+# Ortak mantık (Disable-KillSwitch burada)
+. (Join-Path $PSScriptRoot 'asena-common.ps1')
+
 $DataDir   = Join-Path $env:ProgramData "AsenaPlug"
 $RunDir    = Join-Path $DataDir "run"
 $LogFile   = Join-Path $DataDir "usque.log"
@@ -18,6 +21,19 @@ $ListenDns = "127.0.0.2"
 function Write-Log($msg) {
     $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     Add-Content -Path $LogFile -Value "$ts  $msg" -Encoding UTF8 -ErrorAction SilentlyContinue
+}
+
+function Restore-Dns($prev) {
+    # state.prevDns'i AYNEN geri koy: değer varsa kullanıcının statik DNS'i, boşsa DHCP.
+    if (-not $prev) { return }
+    foreach ($p in $prev.PSObject.Properties) {
+        if (-not (Get-NetAdapter -Name $p.Name -ErrorAction SilentlyContinue)) { continue }
+        if ($p.Value) {
+            Set-DnsClientServerAddress -InterfaceAlias $p.Name -ServerAddresses ($p.Value -split ',') -ErrorAction SilentlyContinue
+        } else {
+            Set-DnsClientServerAddress -InterfaceAlias $p.Name -ResetServerAddresses -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Write-Log "asena-off: teardown başlıyor..."
@@ -47,10 +63,14 @@ Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
     Where-Object { $_.NameServers -contains $ListenDns } |
     ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
 
-# 5. Sistem DNS'ini sadece GEREKİYORSA otomatiğe al: full moddaysak (DNS=1.1.1.1
-#    yapmıştık), durum bilinmiyorsa, ya da bir adapter hâlâ 127.0.0.2'ye ayarlıysa
-#    (eski selective hijack kalıntısı). Temiz selective'de DNS'e dokunmayız.
-$resetAll = (-not $state) -or ($state.scope -eq "full")
+# 5. Sistem DNS'ini geri al. Öncelik state.prevDns: full mod bağlanırken her
+#    adapterin ÖNCEKİ DNS'i kaydedilir (statik değer ya da "" = DHCP) — AYNEN geri
+#    konur (kullanıcının elle girdiği DNS kaybolmaz). prevDns yoksa (eski sürüm
+#    state'i / durum bilinmiyor) eski davranış: full/bilinmeyende hepsini otomatiğe
+#    al. 127.0.0.2 kalıntısı (eski selective hijack) her durumda sıfırlanır.
+$restored = $false
+if ($state -and $state.prevDns) { Restore-Dns $state.prevDns; $restored = $true }
+$resetAll = (-not $restored) -and ((-not $state) -or ($state.scope -eq "full"))
 Get-NetAdapter -ErrorAction SilentlyContinue | ForEach-Object {
     $cur = (Get-DnsClientServerAddress -InterfaceAlias $_.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses
     if ($resetAll -or ($cur -contains $ListenDns)) {
@@ -61,6 +81,10 @@ Get-NetAdapter -ErrorAction SilentlyContinue | ForEach-Object {
 # 6. IPv6 firewall kurallarını kaldır (selective fail-closed + full leak-block)
 Remove-NetFirewallRule -Group $V6Rule -ErrorAction SilentlyContinue
 Remove-NetFirewallRule -Group "AsenaPlug-Full-IPv6Block" -ErrorAction SilentlyContinue
+
+# 6b. Kill-switch'i kapat (default outbound=Allow + kurallar) — varsa. Bunu YAPMAZSAK
+#     kill-switch açıkken disconnect edince tüm internet bloklu kalırdı.
+Disable-KillSwitch
 
 # 7. Endpoint pin route'ları FİZİKSEL arayüzde -> usque ölünce uçmaz, explicit sil
 if ($state -and $state.pins) {

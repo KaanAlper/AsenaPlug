@@ -25,9 +25,12 @@ def is_admin() -> bool:
         return False
 
 
-def acquire_single_instance(name: str = "AsenaPlug_SingleInstance") -> bool:
+def acquire_single_instance(name: str = "Global\\AsenaPlug_SingleInstance") -> bool:
     """Aynı anda tek tray çalışsın (logon görevi + elle açış çakışmasın).
-    Mutex bu process ömrü boyunca tutulur. Başka örnek varsa False döner."""
+    Mutex bu process ömrü boyunca tutulur. Başka örnek varsa False döner.
+    'Global\\' öneki: hızlı kullanıcı değişiminde iki oturumun iki tray + iki usque
+    ile aynı sistemi yönetmesini önler (session-local mutex bunu kaçırırdı). Tray
+    elevated olduğundan Global namespace'e yazma izni var."""
     try:
         ERROR_ALREADY_EXISTS = 183
         ctypes.windll.kernel32.CreateMutexW(None, False, name)
@@ -37,11 +40,26 @@ def acquire_single_instance(name: str = "AsenaPlug_SingleInstance") -> bool:
 
 
 def relaunch_as_admin():
-    """UAC ile kendini yönetici olarak yeniden başlat."""
+    """UAC ile kendini yönetici olarak yeniden başlat. UAC reddedilirse SESSİZCE
+    ölme — kullanıcıya neden gerektiğini söyle (yoksa uygulama iz bırakmadan kaybolur)."""
     # frozen: lpFile zaten exe -> argv[0]'ı tekrar geçme. dev: script'i (argv[0]) geç.
     argv = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv
     params = " ".join(f'"{a}"' for a in argv)
-    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+    # ShellExecuteW: başarı > 32; <=32 = kullanıcı UAC'yi reddetti / yükseltme hatası
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+    try:
+        if int(rc) <= 32:
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                "AsenaPlug needs administrator rights (UAC) to set up the tunnel and "
+                "manage connections.\n\n"
+                "AsenaPlug, tüneli kurmak ve bağlantıları yönetmek için yönetici "
+                "izni (UAC) gerektirir.",
+                "AsenaPlug", 0x10,  # MB_ICONERROR
+            )
+            sys.exit(1)
+    except Exception:
+        pass
     sys.exit(0)
 
 
@@ -122,6 +140,28 @@ def adapter_exists(name: str) -> bool:
         return any(n.lower() == target for n in list_adapters())
     except Exception:
         return False
+
+
+def current_default_gateway() -> str | None:
+    """FİZİKSEL default gateway'in NextHop IP'si (TUN hariç). Ağ değişince (WiFi
+    switch, dock, hotspot) bu değer değişir; tray bunu state.json'daki gwIP ile
+    karşılaştırıp route'ları tazeler. powershell spawn eder -> UI thread'inde ASLA
+    çağırma, sadece arka plan thread'inden. Bulunamazsa None.
+    NOT: full modda fiziksel 0.0.0.0/0 route'u silinmez (split-default /1 ile ezilir),
+    bu yüzden Get-NetRoute 0.0.0.0/0 hâlâ fiziksel gateway'i verir."""
+    ps = ("$r = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
+          "Where-Object { $_.NextHop -ne '0.0.0.0' -and $_.InterfaceAlias -ne 'usque' } | "
+          "Sort-Object RouteMetric | Select-Object -First 1; "
+          "if ($r) { $r.NextHop }")
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=8, creationflags=CREATE_NO_WINDOW,
+        )
+        gw = (out.stdout or "").strip()
+        return gw or None
+    except Exception:
+        return None
 
 
 # --- Bildirim ---

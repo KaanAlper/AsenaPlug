@@ -18,6 +18,9 @@ param(
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = "Stop"
 
+# Ortak mantık (blacklist parse + dnsproxy args) — kopya yerine tek kaynak
+. (Join-Path $PSScriptRoot 'asena-common.ps1')
+
 # --- Yollar (hepsi paylaşılan ProgramData; SYSTEM + kullanıcı ortak) ---
 $InstallDir   = Join-Path $env:ProgramFiles "AsenaPlug"
 $UsqueExe     = Join-Path $InstallDir "usque.exe"
@@ -32,9 +35,6 @@ $StateFile    = Join-Path $RunDir "state.json"
 $DesiredFile  = Join-Path $RunDir "desired.json"
 $StdoutLog    = Join-Path $DataDir "usque-stdout.log"
 $StderrLog    = Join-Path $DataDir "usque-stderr.log"
-$ResolvedFile = Join-Path $RunDir "asena-resolved-ips.txt"        # route-sync ile ortak IP defteri
-$RouteExe     = Join-Path $env:SystemRoot "System32\route.exe"    # /32 route (route.exe hızlı)
-
 $TunName      = "usque"
 $V6Rule       = "AsenaPlug-IPv6-FailClosed"
 $ListenDns    = "127.0.0.2"
@@ -58,13 +58,41 @@ function Write-Log($msg) {
     Add-Content -Path $LogFile -Value "$ts  $msg" -Encoding UTF8 -ErrorAction SilentlyContinue
 }
 
+function Get-StaticDnsConfig([string]$alias) {
+    # Adapterin STATİK IPv4 DNS'i. Get-DnsClientServerAddress statik/DHCP ayrımı
+    # yapamaz (DHCP'den geleni de listeler); ayrım registry NameServer'da.
+    # Boş dönüş = DHCP (restore'da ResetServerAddresses).
+    try {
+        $guid = (Get-NetAdapter -Name $alias -ErrorAction Stop).InterfaceGuid
+        $key  = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$guid"
+        $v = (Get-ItemProperty -Path $key -Name NameServer -ErrorAction SilentlyContinue).NameServer
+        if ($v) { return ("$v".Trim() -replace '[ ;]+', ',') }
+    } catch {}
+    return ""
+}
+
+function Restore-Dns($prev) {
+    # state.prevDns'i AYNEN geri koy: değer varsa kullanıcının statik DNS'i,
+    # boşsa DHCP. (Eskiden hepsi DHCP'ye sıfırlanıyordu -> elle girilen DNS kayboluyordu.)
+    if (-not $prev) { return }
+    foreach ($p in $prev.PSObject.Properties) {
+        if (-not (Get-NetAdapter -Name $p.Name -ErrorAction SilentlyContinue)) { continue }
+        if ($p.Value) {
+            Set-DnsClientServerAddress -InterfaceAlias $p.Name -ServerAddresses ($p.Value -split ',') -ErrorAction SilentlyContinue
+        } else {
+            Set-DnsClientServerAddress -InterfaceAlias $p.Name -ResetServerAddresses -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # --- desired oku ---
-$transport = "http2"; $scope = "selective"
+$transport = "http3"; $scope = "selective"; $killswitch = $false
 if (Test-Path $DesiredFile) {
     try {
         $d = Get-Content $DesiredFile -Raw | ConvertFrom-Json
         if ($d.transport) { $transport = "$($d.transport)" }
         if ($d.scope)     { $scope     = "$($d.scope)" }
+        if ($null -ne $d.killswitch) { $killswitch = [bool]$d.killswitch }
     } catch { Write-Log "desired.json okunamadı, varsayılan kullanılıyor: $_" }
 }
 # CLI argümanları (tray'den) desired.json'ı geçersiz kılar — öncelikli
@@ -90,6 +118,11 @@ if ($curState -and (("$($curState.transport)" -ne $transport) -or ("$($curState.
         ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
     Remove-NetFirewallRule -Group $V6Rule -ErrorAction SilentlyContinue
     Remove-NetFirewallRule -Group "AsenaPlug-Full-IPv6Block" -ErrorAction SilentlyContinue
+    # full'den ÇIKILIYORSA kullanıcının DNS'ini geri koy (selective DNS'e dokunmaz;
+    # bunu yapmazsak 1.1.1.1 statik kalır ve "sistem DNS değişmez" sözü bozulur)
+    if (("$($curState.scope)" -eq "full") -and ($scope -ne "full")) {
+        Restore-Dns $curState.prevDns
+    }
     Remove-Item $StateFile -Force -ErrorAction SilentlyContinue
     # TUN kaybolana dek bekle (route'lar uçsun -> temiz zemin), en fazla ~6sn
     $w = 0
@@ -99,35 +132,53 @@ if ($curState -and (("$($curState.transport)" -ne $transport) -or ("$($curState.
     Write-Log "clean slate tamam (TUN indi)."
 }
 
-# --- 1. usque başlat ---
+# --- 1. usque başlat (http3 dene, TUN gelmezse http2'ye DÜŞ) ---
+# http3 (QUIC/UDP 443) daha hızlı ama bazı ağlarda UDP 443 bloklu/throttle -> TUN
+# hiç gelmez. O durumda otomatik --http2 (TCP+TLS) ile yeniden dener: "h3 hızı,
+# olmazsa h2 sağlamlığı". Seçilen transport state.json'a GERÇEK haliyle yazılır.
+function Start-UsqueAndWait([bool]$useHttp2) {
+    $protoFlags = @(); if ($useHttp2) { $protoFlags = @("--http2") }
+    $argList = @("-c", $ConfigJson, "nativetun", "--always-reconnect",
+                 "--keepalive-period", "15s") + $protoFlags
+    Write-Log "usque başlatılıyor: $($argList -join ' ')"
+    $proc = Start-Process -FilePath $UsqueExe -ArgumentList $argList `
+        -RedirectStandardOutput $StdoutLog -RedirectStandardError $StderrLog -NoNewWindow -PassThru
+    $w = 0
+    while (-not (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue) -and $w -lt 24) {
+        Start-Sleep -Milliseconds 500; $w++
+    }
+    if (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue) { return $proc.Id }
+    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue   # başarısız -> temiz zemin
+    return $null
+}
+
 $usque = Get-Process -Name "usque" -ErrorAction SilentlyContinue
 if (-not $usque) {
     if (-not (Test-Path $UsqueExe))   { throw "usque.exe yok: $UsqueExe" }
     if (-not (Test-Path $ConfigJson)) { throw "config.json yok: $ConfigJson — 'usque register' çalıştır" }
 
-    $protoFlags = @()
-    if ($transport -eq "http2") { $protoFlags = @("--http2") }
-
-    $argList = @("-c", $ConfigJson, "nativetun", "--always-reconnect",
-                 "--keepalive-period", "15s") + $protoFlags
-    Write-Log "usque başlatılıyor: $($argList -join ' ')"
-    $proc = Start-Process -FilePath $UsqueExe -ArgumentList $argList `
-        -RedirectStandardOutput $StdoutLog -RedirectStandardError $StderrLog `
-        -NoNewWindow -PassThru
-    $usquePid = $proc.Id
+    $usquePid = Start-UsqueAndWait ($transport -eq "http2")
+    if (-not $usquePid -and $transport -eq "http3") {
+        Write-Log "http3/QUIC TUN gelmedi -> http2 fallback (UDP 443 bloklu olabilir)"
+        $w = 0
+        while ((Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue) -and $w -lt 12) {
+            Start-Sleep -Milliseconds 250; $w++
+        }
+        $transport = "http2"    # GERÇEK transport -> state.json + DNS mantığı bunu görsün
+        $usquePid = Start-UsqueAndWait $true
+    }
+    if (-not $usquePid) { throw "TUN adapteri '$TunName' gelmedi (h3+h2 denendi). usque-stderr.log'a bak." }
 } else {
     $usquePid = $usque.Id
     Write-Log "usque zaten çalışıyor (PID $usquePid)."
-}
-
-# TUN adapteri görünene dek bekle (koşul-bazlı)
-$waited = 0
-while (-not (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue) -and $waited -lt 24) {
-    Start-Sleep -Milliseconds 500
-    $waited++
-}
-if (-not (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue)) {
-    throw "TUN adapteri '$TunName' 12sn içinde gelmedi. usque-stderr.log'a bak."
+    # Zaten çalışan usque (ör. ağ-değişimi reapply): TUN ayakta mı doğrula
+    $waited = 0
+    while (-not (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue) -and $waited -lt 24) {
+        Start-Sleep -Milliseconds 500; $waited++
+    }
+    if (-not (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue)) {
+        throw "TUN '$TunName' yok (usque çalışıyor ama adapter gelmedi)."
+    }
 }
 Write-Log "TUN '$TunName' ayakta."
 
@@ -174,6 +225,7 @@ if ($scope -eq "full" -or -not $endpoint) {
 }
 
 # --- 4. Scope'a göre routing ---
+$prevDns = $null   # full modda dolar; state.json'a yazılır (asena-off geri koyar)
 if ($scope -eq "full") {
     # split-default: fiziksel default'u SİLMEDEN geçersiz kıl (teardown temiz)
     foreach ($half in @("0.0.0.0/1","128.0.0.0/1")) {
@@ -182,14 +234,45 @@ if ($scope -eq "full") {
         New-NetRoute -DestinationPrefix $half -InterfaceAlias $TunName -RouteMetric 1 `
             -ErrorAction SilentlyContinue | Out-Null
     }
-    Set-DnsClientServerAddress -InterfaceAlias $physIface -ServerAddresses @($FullDns) -ErrorAction SilentlyContinue
+
+    # DNS: TÜM ayakta fiziksel adapterlerde değiştir (yalnız default arayüz yetmez:
+    # Windows'un paralel çözümlemesi -SMHNR- ikinci arayüzden ISP DNS'ine sorup
+    # sızdırabilir). Değiştirmeden önce her adapterin STATİK DNS'i prevDns'e alınır.
+    # full->full reconnect'te mevcut DNS bizim 1.1.1.1'imiz olduğundan snapshot
+    # ALINMAZ, önceki state'in prevDns'i taşınır (yoksa kendi değerimizi "kullanıcının
+    # ayarı" sanıp kalıcılaştırırdık).
+    if ($curState -and ("$($curState.scope)" -eq "full") -and $curState.prevDns) {
+        $prevDns = $curState.prevDns
+    }
+    $targets = @{}
+    Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+        Where-Object { $_.Status -eq "Up" -and $_.Name -ne $TunName } |
+        ForEach-Object { $targets[$_.Name] = $true }
+    $targets[$physIface] = $true   # default arayüz sanal olsa bile kapsansın
+    if (-not $prevDns) {
+        $snap = [ordered]@{}
+        foreach ($name in @($targets.Keys | Sort-Object)) { $snap[$name] = Get-StaticDnsConfig $name }
+        $prevDns = $snap
+    }
+    foreach ($name in @($targets.Keys)) {
+        Set-DnsClientServerAddress -InterfaceAlias $name -ServerAddresses @($FullDns) -ErrorAction SilentlyContinue
+    }
+
     # IPv6 LEAK koruması: usque IPv4-only. Full modda IPv6 internet'i (2000::/3 global
     # unicast) blokla -> uygulamalar IPv4'e (tünele) düşer, gerçek IPv6 sızmaz.
-    # (fe80::/ULA dokunulmaz.) Teardown'da AsenaPlug-Full-IPv6Block kaldırılır.
+    # Teardown'da AsenaPlug-Full-IPv6Block grubu kaldırılır.
     Remove-NetFirewallRule -Group "AsenaPlug-Full-IPv6Block" -ErrorAction SilentlyContinue
     New-NetFirewallRule -DisplayName "AsenaPlug-Full-IPv6Block" -Group "AsenaPlug-Full-IPv6Block" `
         -Direction Outbound -Action Block -RemoteAddress "2000::/3" -Profile Any -ErrorAction SilentlyContinue | Out-Null
-    Write-Log "FULL: split-default -> $TunName, DNS=$FullDns, IPv6 bloklu (leak yok)"
+    # DNS sızıntısı: router'ın link-local (fe80::) veya ULA DNS'i 2000::/3'e GİRMEZ,
+    # sorgular oradan dışarı sızardı. Bu aralıklar için port 53'ü ayrıca blokla.
+    # (fe80/ULA'nın kendisi bloklanmaz — yalnız DNS; LAN erişimi bozulmaz.)
+    foreach ($proto in @("UDP","TCP")) {
+        New-NetFirewallRule -DisplayName "AsenaPlug-Full-DnsV6Block-$proto" -Group "AsenaPlug-Full-IPv6Block" `
+            -Direction Outbound -Action Block -Protocol $proto -RemotePort 53 `
+            -RemoteAddress @("fe80::/10","fc00::/7") -Profile Any -ErrorAction SilentlyContinue | Out-Null
+    }
+    Write-Log "FULL: split-default -> $TunName, DNS=$FullDns ($($targets.Count) adapter, prevDns kayıtlı), IPv6+v6DNS bloklu"
 }
 else {
     # selective: fiziksel default kalır; TUN yüksek metric. SİSTEM DNS'İNE DOKUNMAYIZ.
@@ -198,16 +281,8 @@ else {
     # sadece blacklist çözümü etkilenir, internet ayakta kalır.
     Set-NetIPInterface -InterfaceAlias $TunName -InterfaceMetric 5000 -ErrorAction SilentlyContinue
 
-    # blacklist oku
-    $domains = @()
-    if (Test-Path $BlacklistTxt) {
-        $domains = Get-Content $BlacklistTxt |
-            ForEach-Object { ($_ -replace '#.*', '').Trim() } |
-            Where-Object { $_ -ne '' } |
-            ForEach-Object { (($_ -replace '^\*\.', '') -replace ':\d+.*$', '').TrimEnd('.').ToLower() } |
-            Where-Object { $_ -match '^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$' } |
-            Sort-Object -Unique
-    }
+    # blacklist oku (ortak parse -> Python state.py ile aynı kural)
+    $domains = @(Get-BlacklistDomains $BlacklistTxt)
 
     # eski NRPT kurallarımızı temizle (NameServers 127.0.0.2 = bizimkiler)
     Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
@@ -224,8 +299,7 @@ else {
             # aynı sabit cevabı görür -> CDN rotasyonu azalır. Asıl uyuşmazlık çözümü
             # route-sync BİRİKİMİ (görülen tüm IP'ler ~1sa route'lu kalır = Linux
             # nftset) + eager warm-up. (route-sync watchdog AYNI argümanları kullanır.)
-            $dnsArgs = @("-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2,
-                         "--cache", "--cache-optimistic", "--cache-min-ttl=600", "--cache-size=4194304")
+            $dnsArgs = Get-DnsproxyArgs $ListenDns $UpstreamDns1 $UpstreamDns2
             $dnsProc = Start-Process -FilePath $DnsproxyExe -ArgumentList $dnsArgs -NoNewWindow -PassThru
             $ok = $false; $tries = 0
             while (-not $ok -and $tries -lt 10) {
@@ -245,53 +319,36 @@ else {
                 }
                 # SADECE blacklist domainleri -> dnsproxy (NRPT). Sistem DNS değişmez.
                 # Tek çağrıda tüm namespace'ler (324 ayrı cmdlet yerine) -> hızlı.
-                $ns = @($domains | ForEach-Object { "." + $_ })
+                # Hem "site.com" (apex) hem ".site.com" (subdomain) girilir — nokta-önekli
+                # suffix bazı Windows sürümlerinde apex'i EŞLEMEZ, apex kaçırılırdı.
+                $ns = @($domains | ForEach-Object { $_; "." + $_ })
                 Add-DnsClientNrptRule -Namespace $ns -NameServers $ListenDns -ErrorAction SilentlyContinue
                 Clear-DnsClientCache -ErrorAction SilentlyContinue  # eski zehirli kayıtları at
                 Write-Log "SELECTIVE: $($domains.Count) domain NRPT, resolver'lar tünelden (sistem DNS değişmedi)."
-
-                # --- Eager warm-up: blacklist'i ŞİMDİ çöz + route et (route-sync'i BEKLEME) ---
-                # NRPT kurulu olduğundan bu sorgular dnsproxy'ye gider -> cache'i pinli
-                # cevapla primeler VE /32 route'ları connect BİTMEDEN kurar. Böylece
-                # tarayıcı açıldığı an route hazır (15-20sn 'ısınma' biter) ve AYNI pinli
-                # cevabı alır -> IP zaten route'lu (Linux 'tak diye' davranışı).
-                # route-sync bundan sonra bakımını üstlenir (rotasyon/yeni IP).
-                $tunIdxWarm = (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue).ifIndex
-                if ($tunIdxWarm) {
-                    [System.Threading.ThreadPool]::SetMinThreads(256, 256) | Out-Null
-                    $wtasks = @{}
-                    foreach ($dom in $domains) {
-                        try { $wtasks[$dom] = [System.Net.Dns]::GetHostAddressesAsync($dom) } catch {}
-                    }
-                    if ($wtasks.Count -gt 0) {
-                        try { [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]@($wtasks.Values), 8000) | Out-Null } catch {}
-                    }
-                    $warmIps = @{}
-                    foreach ($dom in $wtasks.Keys) {
-                        $t = $wtasks[$dom]
-                        if ($t.Status -ne 'RanToCompletion' -or -not $t.Result) { continue }
-                        foreach ($a in $t.Result) {
-                            if ($a.AddressFamily -eq 'InterNetwork') { $warmIps[$a.ToString()] = $true }
-                        }
-                    }
-                    foreach ($ip in $warmIps.Keys) {
-                        & $RouteExe -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdxWarm 2>$null | Out-Null
-                    }
-                    if ($warmIps.Count -gt 0) {
-                        $warmIps.Keys | Sort-Object | Set-Content $ResolvedFile -Encoding UTF8
-                    }
-                    Write-Log "SELECTIVE warm-up: $($warmIps.Count) IP anında route edildi (route-sync beklenmedi)."
-                }
+                # NOT: blacklist /32 route'ları route-sync ARKA PLANDA doldurur
+                # (connect'i bloklamaz -> "Connected" hemen). Eskiden burada senkron
+                # warm-up vardı; kullanıcı beklemesin diye arka plana alındı.
             } else {
                 Write-Log "UYARI: dnsproxy dinlemedi — NRPT eklenmedi, blacklist devre dışı."
             }
         } else {
             Write-Log "UYARI: dnsproxy.exe yok — blacklist DNS atlandı."
         }
-        # route-sync: ilk route'lar warm-up'ta (yukarıda) zaten kuruldu; route-sync
-        # bakımı üstlenir — rotasyon/yeni CDN IP'lerini toplar + IPv6 fail-closed.
+        # route-sync ARKA PLANDA tüm blacklist route'larını kurar: cache preload
+        # (önceki oturumdan ANINDA) + paralel çöz + /32 route + IPv6 fail-closed.
+        # Connect'i BLOKLAMAZ -> "Connected" hemen görünür, route'lar arka planda dolar.
         Start-ScheduledTask -TaskName "AsenaPlug_RouteSync" -ErrorAction SilentlyContinue
     }
+}
+
+# --- 4b. Kill-switch (opsiyonel; SADECE full mod) ---
+# full+açık -> WFP helper'ı başlat (fail-closed, brick-proof); değilse -> helper'ı durdur.
+if ($scope -eq "full" -and $killswitch) {
+    $tunIdx = (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue).ifIndex
+    Enable-KillSwitch $tunIdx $CfRanges $UsqueExe
+    Write-Log "kill-switch AÇIK (full; WFP dynamic session, TUN idx=$tunIdx / usque / endpoint izinli)"
+} else {
+    Disable-KillSwitch
 }
 
 # --- 5. state.json yaz (tek doğru kaynak) ---
@@ -301,7 +358,11 @@ $state = [ordered]@{
     pid       = $usquePid
     endpoint  = $endpoint
     pins      = @($pins)
+    prevDns   = $prevDns          # full: adapter -> önceki statik DNS ("" = DHCP); selective: null
+    gwIP      = $gwIP             # bağlanınca kullanılan fiziksel gateway (ağ-değişimi tespiti)
+    physIface = $physIface        # fiziksel arayüz adı (endpoint pin'i burada)
+    killswitch = ($scope -eq "full" -and $killswitch)   # gerçekten aktif mi (yalnız full)
     started   = (Get-Date).ToString("o")
 }
-$state | ConvertTo-Json -Compress | Set-Content -Path $StateFile -Encoding UTF8
+$state | ConvertTo-Json -Compress -Depth 4 | Set-Content -Path $StateFile -Encoding UTF8
 Write-Log "asena-on OK | $transport/$scope | pid=$usquePid | pins=$($pins -join ',')"

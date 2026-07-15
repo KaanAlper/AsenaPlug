@@ -21,12 +21,21 @@ concurrency:                   # üst üste push'larda yalnız en sonu yayınla
 jobs:
   build:
     runs-on: windows-latest
+    # İmzalama secret'ı (Repo Settings > Secrets). Tanımlı DEĞİLSE imza adımı
+    # atlanır, build yine imzasız çıkar (SmartScreen uyarısı sürer ama release olur).
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # Kill-switch helper (Go/WFP) build.ps1 içinde derlenir; Go'yu go.mod'a göre kur
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: windows/killswitch/go.mod
 
       - name: Sürümü ayarla (1.0.<run_number>)
         id: ver
@@ -44,11 +53,49 @@ jobs:
           cd windows
           .\build.ps1
 
+      # Code signing (SignPath.io Foundation — açık kaynağa ÜCRETSİZ) — SADECE
+      # SIGNPATH_API_TOKEN secret'ı tanımlıysa çalışır. SignPath, artifact'i GitHub'dan
+      # çeker, imzalar, imzalıyı geri indirir. Önce unsigned exe'yi artifact yaparız.
+      # Gerekli: SIGNPATH_API_TOKEN (secret) + SignPath panelinden org-id/project-slug/
+      # policy-slug (public repo olduğundan slug'lar hassas değil, secret'a gerek yok
+      # ama secret tutmak istersen değiştir). NOT: önce signpath.org/open-source'tan
+      # projeyi ONAYLATMAK + panelde "trusted build system=GitHub" + artifact config gerekir.
+      - name: Unsigned exe'yi artifact yap (SignPath çeksin)
+        if: ${{ env.SIGNPATH_API_TOKEN != '' }}
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: asenaplug-unsigned
+          path: windows/dist/AsenaPlug.exe
+
+      - name: Code signing (SignPath.io)
+        if: ${{ env.SIGNPATH_API_TOKEN != '' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORG_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: windows/dist   # imzalı AsenaPlug.exe geri buraya iner
+
+      # SHA256 İMZADAN SONRA üretilir: imza exe'yi değiştirir, hash imzalı dosyayı kapsamalı.
+      - name: SHA256 üret (indirme sonrası bütünlük doğrulaması için)
+        shell: pwsh
+        run: |
+          cd windows/dist
+          $h = (Get-FileHash AsenaPlug.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  AsenaPlug.exe" | Set-Content AsenaPlug.exe.sha256 -NoNewline -Encoding ascii
+          Write-Host "SHA256: $h"
+
       - name: Release oluştur + exe yükle
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: AsenaPlug v${{ steps.ver.outputs.version }}
-          files: windows/dist/AsenaPlug.exe
+          files: |
+            windows/dist/AsenaPlug.exe
+            windows/dist/AsenaPlug.exe.sha256
           generate_release_notes: true
           make_latest: "true"
