@@ -20,10 +20,6 @@ DNSPROXY_EXE = INSTALL_DIR / "dnsproxy.exe"
 
 # --- Paylaşılan veri (%ProgramData%\AsenaPlug) — kullanıcı + SYSTEM ortak ---
 DATA_DIR      = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "AsenaPlug"
-
-# --- Eski (rebrand öncesi) "usque" klasörleri — migration için ---
-OLD_INSTALL_DIR = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "usque"
-OLD_DATA_DIR    = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "usque"
 CONFIG_DIR    = DATA_DIR / "config"
 RUN_DIR       = DATA_DIR / "run"
 LOG_FILE      = DATA_DIR / "usque.log"
@@ -66,14 +62,3 @@ TASKS = {
     "route_sync": "AsenaPlug_RouteSync",
     "rescue":     "AsenaPlug_Rescue",
 }
-
-# --- Eski warp-tray artıkları (rebrand öncesi) — bir kez temizlenir ---
-# Eski sürüm autostart'ı Startup'taki bir VBS'e dayandırıyordu; rebrand'den sonra
-# VBS silinmiş warp-tray.pyw'yi çağırıp her logon'da "dosya bulunamadı" veriyor.
-LEGACY_CLEAN_FLAG = DATA_DIR / "legacy-cleaned.flag"
-LEGACY_STARTUP_VBS = ("warp-tray.vbs", "warp_tray.vbs")
-LEGACY_TASKS = (
-    "WarpTray_On_HTTP2", "WarpTray_On_HTTP3", "WarpTray_Off",
-    "WarpTray_BypassReload", "WarpTray_DnsReload",
-    "WarpTray_RouteSync", "WarpTray_Rescue", "WarpTray_Tray",
-)
