@@ -53,10 +53,6 @@ def main():
     if not win.is_admin():
         win.relaunch_as_admin()  # UAC; yükseltilmiş kopya devam eder, bu süreç biter
 
-    # Eski warp-tray artıklarını temizle (Startup VBS + WarpTray_* görevleri).
-    # Her açılışta güvenli/idempotent; autostart hatasını (bozuk VBS) bitirir.
-    install.cleanup_legacy()
-
     if install.needs_setup():
         _run_setup_visible()             # ilk kurulum — GÖRÜNÜR (toast + 'hazır' bildirimi)
     elif install.needs_upgrade() or install.installed_version() is None:

@@ -16,8 +16,6 @@ from .paths import (
     INSTALL_DIR, SCRIPTS_DIR, USQUE_EXE, WINTUN_DLL, DNSPROXY_EXE,
     DATA_DIR, CONFIG_DIR, RUN_DIR, CONFIG_JSON, BLACKLIST_PATH, SETUP_FLAG, LOG_FILE,
     TASKS, APP_NAME, APP_VERSION, VERSION_FILE,
-    LEGACY_CLEAN_FLAG, LEGACY_STARTUP_VBS, LEGACY_TASKS,
-    OLD_DATA_DIR,
 )
 
 APP_EXE = INSTALL_DIR / f"{APP_NAME}.exe"
@@ -115,33 +113,8 @@ def refresh_scripts():
         log(f"refresh_scripts atlandı (admin gerekebilir): {e}")
 
 
-def _migrate_from_usque():
-    """Eski 'usque' klasörlerinden yeni 'AsenaPlug'a taşı (rebrand migration).
-    config.json (cihaz KİMLİĞİ) + blacklist KESİNLİKLE korunur — yoksa yeniden
-    register gerekir. Bir kez; yeni veri klasörü zaten varsa atlanır.
-
-    NOT: usque->AsenaPlug migration SADECE bu sürüm serisinde gerekli. Herkes
-    geçtikten sonra (bir sonraki majör) bu fonksiyon + OLD_* sabitleri + legacy
-    temizlik kaldırılabilir. (Kullanıcı isteği: 'sonraki sürümde silelim'.)"""
-    if DATA_DIR.exists() or not OLD_DATA_DIR.exists():
-        return
-    try:
-        old_cfg = OLD_DATA_DIR / "config" / "config.json"
-        old_bl = OLD_DATA_DIR / "config" / "asena-blacklist.txt"
-        if old_cfg.exists() or old_bl.exists():
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            if old_cfg.exists():
-                shutil.copy2(old_cfg, CONFIG_JSON)      # KİMLİK — kritik
-            if old_bl.exists():
-                shutil.copy2(old_bl, BLACKLIST_PATH)
-            log("usque->AsenaPlug migration: config.json + blacklist taşındı")
-    except Exception as e:
-        log(f"usque->AsenaPlug migration atlandı: {e}")
-
-
 def run_setup():
     """Admin gerektirir. Tüm kurulum adımlarını sırayla yapar."""
-    _migrate_from_usque()      # eski usque verisini (kimlik!) yeni klasöre taşı — dizinlerden ÖNCE
     # 1. Dizinler
     for d in (INSTALL_DIR, SCRIPTS_DIR, DATA_DIR, CONFIG_DIR, RUN_DIR):
         d.mkdir(parents=True, exist_ok=True)
@@ -264,54 +237,6 @@ def launch_installed():
         subprocess.Popen([str(APP_EXE)])
     except Exception as e:
         log(f"kurulu exe başlatılamadı: {e}")
-
-
-def cleanup_legacy():
-    """Eski warp-tray (rebrand öncesi) artıklarını temizle. Her açılışta çağrılır;
-    idempotent. VBS silme ucuz (dosya op) → HER SEFERİNDE (logon'daki 'dosya
-    bulunamadı' hatasını bitirir). Eski görev kaldırma powershell ister →
-    flag ile TEK SEFER. Autostart artık AsenaPlug_Tray görevinde."""
-    # 1) Startup'taki eski VBS'i sil — silinmiş warp-tray.pyw'yi çağırıp hata veriyor
-    try:
-        startup = (Path(os.environ.get("APPDATA", "")) /
-                   "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup")
-        for name in LEGACY_STARTUP_VBS:
-            try:
-                (startup / name).unlink()
-            except FileNotFoundError:
-                pass
-    except Exception as e:
-        log(f"eski VBS silinemedi: {e}")
-
-    # 2) Eski WarpTray_* görevlerini kaldır (bir kez; flag)
-    if LEGACY_CLEAN_FLAG.exists():
-        return
-    try:
-        ps = "\n".join(
-            f"Unregister-ScheduledTask -TaskName '{t}' -Confirm:$false "
-            f"-ErrorAction SilentlyContinue" for t in LEGACY_TASKS
-        )
-        subprocess.run(
-            ["powershell", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-Command", ps],
-            check=False, capture_output=True, creationflags=CREATE_NO_WINDOW,
-        )
-    except Exception as e:
-        log(f"eski görevler kaldırılamadı: {e}")
-
-    # 3) Kuruluysa yeni görevleri garanti et: eski VBS sürümünden gelen kullanıcıda
-    #    AsenaPlug_Tray hiç olmayabilir → autostart hiç çalışmaz. Yeniden kaydet.
-    #    (Fresh install'da run_setup zaten _register_tasks çağırır; burada atlanır.)
-    if SETUP_FLAG.exists():
-        try:
-            _register_tasks()
-        except Exception as e:
-            log(f"görevler garanti edilemedi (legacy): {e}")
-
-    try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        LEGACY_CLEAN_FLAG.touch()
-    except Exception as e:
-        log(f"legacy flag yazılamadı: {e}")
 
 
 def _tray_launch():
