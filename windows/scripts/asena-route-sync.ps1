@@ -23,8 +23,11 @@ $V6Rule        = "AsenaPlug-IPv6-FailClosed"
 # tarayıcının kullandığı IP düşüp kaynak yarım gelir. Yüksek tut -> IP'ler oturum
 # boyunca BİRİKİR, CDN havuzu zamanla tam kapsanır, set sabitlenir (churn durur).
 # (dns-reload / reconnect zaten sıfırdan kurar.)
-$PruneAfter    = 240    # ~1 saat (15sn x 240); pratikte oturum boyunca tutar
-$SleepSeconds  = 15
+# Cache PIN (asena-on) tarayıcı/route-sync uyuşmazlığını çözer; route-sync artık
+# sadece rotasyon/yeni IP bakımı yapar. Interval kısa -> yeni CDN IP'leri hızla
+# yakalanır. Cache pinli olduğundan çoğu çözüm dnsproxy cache'ine düşer (ucuz).
+$PruneAfter    = 600    # ~1 saat (6sn x 600); oturum boyunca IP'ler birikir
+$SleepSeconds  = 6
 # dnsproxy watchdog (selective modda sistem DNS 127.0.0.2'ye bağlı; dnsproxy
 # ölürse internet gider — ölmüşse yeniden başlat)
 $DnsproxyExe   = Join-Path (Join-Path $env:ProgramFiles "usque") "dnsproxy.exe"
@@ -71,9 +74,12 @@ while ($true) {
     }
 
     # dnsproxy watchdog: düşmüşse yeniden başlat (DNS ölü kalıp internet gitmesin)
+    # ARGÜMANLAR asena-on ile AYNI olmalı (cache PIN) — yoksa watchdog restart'ında
+    # cache sıfırlanır, tarayıcı/route-sync uyuşmazlığı geri gelir.
     if ((Test-Path $DnsproxyExe) -and -not (Get-Process -Name dnsproxy -ErrorAction SilentlyContinue)) {
         Start-Process -FilePath $DnsproxyExe -ArgumentList @(
-            "-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2, "--cache"
+            "-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2,
+            "--cache", "--cache-optimistic", "--cache-min-ttl=600", "--cache-size=4194304"
         ) -NoNewWindow -ErrorAction SilentlyContinue
         Write-Log "dnsproxy düşmüştü, yeniden başlatıldı (watchdog)"
     }

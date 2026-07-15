@@ -32,6 +32,8 @@ $StateFile    = Join-Path $RunDir "state.json"
 $DesiredFile  = Join-Path $RunDir "desired.json"
 $StdoutLog    = Join-Path $DataDir "usque-stdout.log"
 $StderrLog    = Join-Path $DataDir "usque-stderr.log"
+$ResolvedFile = Join-Path $RunDir "asena-resolved-ips.txt"        # route-sync ile ortak IP defteri
+$RouteExe     = Join-Path $env:SystemRoot "System32\route.exe"    # /32 route (route.exe hızlı)
 
 $TunName      = "usque"
 $ListenDns    = "127.0.0.2"
@@ -191,7 +193,13 @@ else {
     } else {
         Stop-Process -Name "dnsproxy" -Force -ErrorAction SilentlyContinue
         if (Test-Path $DnsproxyExe) {
-            $dnsArgs = @("-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2, "--cache")
+            # Cache: min-ttl FLOOR (düşük-TTL/TTL-0 CDN'leri sabitler) + optimistic
+            # (stale cevabı ANINDA verir, arkada tazeler). Tarayıcı ile route-sync
+            # aynı sabit cevabı görür -> CDN rotasyonu azalır. Asıl uyuşmazlık çözümü
+            # route-sync BİRİKİMİ (görülen tüm IP'ler ~1sa route'lu kalır = Linux
+            # nftset) + eager warm-up. (route-sync watchdog AYNI argümanları kullanır.)
+            $dnsArgs = @("-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2,
+                         "--cache", "--cache-optimistic", "--cache-min-ttl=600", "--cache-size=4194304")
             $dnsProc = Start-Process -FilePath $DnsproxyExe -ArgumentList $dnsArgs -NoNewWindow -PassThru
             $ok = $false; $tries = 0
             while (-not $ok -and $tries -lt 10) {
@@ -215,14 +223,47 @@ else {
                 Add-DnsClientNrptRule -Namespace $ns -NameServers $ListenDns -ErrorAction SilentlyContinue
                 Clear-DnsClientCache -ErrorAction SilentlyContinue  # eski zehirli kayıtları at
                 Write-Log "SELECTIVE: $($domains.Count) domain NRPT, resolver'lar tünelden (sistem DNS değişmedi)."
+
+                # --- Eager warm-up: blacklist'i ŞİMDİ çöz + route et (route-sync'i BEKLEME) ---
+                # NRPT kurulu olduğundan bu sorgular dnsproxy'ye gider -> cache'i pinli
+                # cevapla primeler VE /32 route'ları connect BİTMEDEN kurar. Böylece
+                # tarayıcı açıldığı an route hazır (15-20sn 'ısınma' biter) ve AYNI pinli
+                # cevabı alır -> IP zaten route'lu (Linux 'tak diye' davranışı).
+                # route-sync bundan sonra bakımını üstlenir (rotasyon/yeni IP).
+                $tunIdxWarm = (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue).ifIndex
+                if ($tunIdxWarm) {
+                    [System.Threading.ThreadPool]::SetMinThreads(256, 256) | Out-Null
+                    $wtasks = @{}
+                    foreach ($dom in $domains) {
+                        try { $wtasks[$dom] = [System.Net.Dns]::GetHostAddressesAsync($dom) } catch {}
+                    }
+                    if ($wtasks.Count -gt 0) {
+                        try { [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]@($wtasks.Values), 8000) | Out-Null } catch {}
+                    }
+                    $warmIps = @{}
+                    foreach ($dom in $wtasks.Keys) {
+                        $t = $wtasks[$dom]
+                        if ($t.Status -ne 'RanToCompletion' -or -not $t.Result) { continue }
+                        foreach ($a in $t.Result) {
+                            if ($a.AddressFamily -eq 'InterNetwork') { $warmIps[$a.ToString()] = $true }
+                        }
+                    }
+                    foreach ($ip in $warmIps.Keys) {
+                        & $RouteExe -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdxWarm 2>$null | Out-Null
+                    }
+                    if ($warmIps.Count -gt 0) {
+                        $warmIps.Keys | Sort-Object | Set-Content $ResolvedFile -Encoding UTF8
+                    }
+                    Write-Log "SELECTIVE warm-up: $($warmIps.Count) IP anında route edildi (route-sync beklenmedi)."
+                }
             } else {
                 Write-Log "UYARI: dnsproxy dinlemedi — NRPT eklenmedi, blacklist devre dışı."
             }
         } else {
             Write-Log "UYARI: dnsproxy.exe yok — blacklist DNS atlandı."
         }
-        # route-sync: blacklist IP'lerini Asena'a route et (+IPv6 fail-closed).
-        # Bloklamadan başlat -> connect hızlı kalsın (route'lar birkaç sn içinde dolar).
+        # route-sync: ilk route'lar warm-up'ta (yukarıda) zaten kuruldu; route-sync
+        # bakımı üstlenir — rotasyon/yeni CDN IP'lerini toplar + IPv6 fail-closed.
         Start-ScheduledTask -TaskName "AsenaPlug_RouteSync" -ErrorAction SilentlyContinue
     }
 }

@@ -22,6 +22,7 @@ $ListenDns    = "127.0.0.2"
 $UpstreamDns1 = "1.1.1.1:53"
 $UpstreamDns2 = "1.0.0.1:53"
 $Resolvers    = @("1.1.1.1", "1.0.0.1")
+$RouteExe     = Join-Path $env:SystemRoot "System32\route.exe"
 
 function Write-Log($msg) {
     $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
@@ -68,8 +69,10 @@ if ($domains.Count -eq 0) {
 # dnsproxy diri mi? değilse başlat + dinlediğini doğrula
 if (-not (Get-Process -Name "dnsproxy" -ErrorAction SilentlyContinue)) {
     if (Test-Path $DnsproxyExe) {
+        # Cache PIN — asena-on/route-sync ile AYNI (tarayıcı/route-sync uyuşmazlığı yok)
         Start-Process -FilePath $DnsproxyExe -ArgumentList @(
-            "-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2, "--cache"
+            "-l", $ListenDns, "-p", "53", "-u", $UpstreamDns1, "-u", $UpstreamDns2,
+            "--cache", "--cache-optimistic", "--cache-min-ttl=600", "--cache-size=4194304"
         ) -NoNewWindow -ErrorAction SilentlyContinue
     }
 }
@@ -90,8 +93,36 @@ if ($ok) {
     }
     $ns = @($domains | ForEach-Object { "." + $_ })
     Add-DnsClientNrptRule -Namespace $ns -NameServers $ListenDns -ErrorAction SilentlyContinue
+
+    # Eager warm-up: /32 route'lar yukarıda temizlendi -> ŞİMDİ yeniden çöz+route et
+    # (route-sync'in ilk turunu bekleme). asena-on ile aynı; blacklist değişikliği de
+    # 'tak diye' uygulanır. dnsproxy cache'i primelenir -> tarayıcı aynı route'lu IP'yi alır.
+    $tunIdxWarm = $tun.InterfaceIndex
+    [System.Threading.ThreadPool]::SetMinThreads(256, 256) | Out-Null
+    $wtasks = @{}
+    foreach ($dom in $domains) {
+        try { $wtasks[$dom] = [System.Net.Dns]::GetHostAddressesAsync($dom) } catch {}
+    }
+    if ($wtasks.Count -gt 0) {
+        try { [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]@($wtasks.Values), 8000) | Out-Null } catch {}
+    }
+    $warmIps = @{}
+    foreach ($dom in $wtasks.Keys) {
+        $t = $wtasks[$dom]
+        if ($t.Status -ne 'RanToCompletion' -or -not $t.Result) { continue }
+        foreach ($a in $t.Result) {
+            if ($a.AddressFamily -eq 'InterNetwork') { $warmIps[$a.ToString()] = $true }
+        }
+    }
+    foreach ($ip in $warmIps.Keys) {
+        & $RouteExe -4 add $ip mask 255.255.255.255 0.0.0.0 metric 1 if $tunIdxWarm 2>$null | Out-Null
+    }
+    if ($warmIps.Count -gt 0) {
+        $warmIps.Keys | Sort-Object | Set-Content $ResolvedFile -Encoding UTF8
+    }
+
     Start-ScheduledTask -TaskName "AsenaPlug_RouteSync" -ErrorAction SilentlyContinue
-    Write-Log "tamam — $($domains.Count) domain NRPT, resolver'lar tünelden, route-sync başlatıldı."
+    Write-Log "tamam — $($domains.Count) domain NRPT, warm-up $($warmIps.Count) IP route'landı, route-sync başlatıldı."
 } else {
     Write-Log "UYARI: dnsproxy dinlemedi — NRPT eklenmedi."
 }

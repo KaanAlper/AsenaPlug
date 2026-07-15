@@ -317,9 +317,11 @@ class AsenaTray:
             self._phase = "off"
             self._phase_ticks = 0
 
-        # Timeout: faz takılırsa vazgeç (asena-on/off gelmedi)
+        # Timeout: faz takılırsa vazgeç (asena-on/off gelmedi). "on" daha uzun:
+        # asena-on artık eager warm-up (blacklist'i çöz+route) yapıyor, connect
+        # meşru olarak ~10-25sn sürebilir -> erken timeout vermesin.
         self._phase_ticks += 1
-        limit = 44 if self._phase == "on" else 24     # ~22s / ~12s (500ms tik)
+        limit = 60 if self._phase == "on" else 24     # ~30s / ~12s (500ms tik)
         if self._phase_ticks > limit:
             self._reconciling = False
             self._phase = None
