@@ -149,20 +149,8 @@ def run_setup():
     if not CONFIG_JSON.exists():
         _run_usque_register()
 
-    # 7b. En hızlı WARP endpoint'ini LOKAL ölç + config.json'a yaz (kullanıcıya özel;
-    #     sabit IP gömülmez). Best-effort: ağ yoksa/başarısızsa kurulum sürer, ilk
-    #     connect register endpoint'iyle çalışır, kullanıcı sonra menüden tarayabilir.
-    if CONFIG_JSON.exists():
-        try:
-            from . import endpoint
-            r = endpoint.optimize()
-            log(f"endpoint taraması: {r}" if r else "endpoint taraması: aday ulaşılamadı")
-        except Exception as e:
-            log(f"endpoint taraması atlandı: {e}")
-
-    # 7c. Cihaz kimliğini (config.json) diğer yerel kullanıcılara kapat (adım 4'teki
-    #     geniş grant'i miras yoluyla düzeltir). endpoint taramasından SONRA: dosya
-    #     kesin var + son yazımı da yapılmış.
+    # 7b. Cihaz kimliğini (config.json) diğer yerel kullanıcılara kapat (adım 4'teki
+    #     geniş grant'i miras yoluyla düzeltir).
     if CONFIG_JSON.exists():
         _protect_identity(CONFIG_JSON)
 
@@ -205,6 +193,33 @@ def trim_log(max_bytes: int = 2_000_000, keep_lines: int = 500):
             LOG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError:
         pass
+
+
+def heal_scanned_endpoint():
+    """KALDIRILAN endpoint scanner ('Bağlantıyı hızlandır') config.json'daki
+    endpoint_v4'ü bozuk bir IP yapıp http3'ü (ve bazen bağlantıyı) kırıyordu.
+    Etkilenen kullanıcı bu sürüme güncelleyince ONARILSIN: endpoint.applied işareti
+    varsa endpoint.bak'taki orijinal (register) endpoint_v4'ü geri koy — yalnız o
+    alanı (regex), private_key'e dokunma. İşaret dosyalarını temizle. Best-effort."""
+    applied = CONFIG_DIR / "endpoint.applied"
+    bak = CONFIG_DIR / "endpoint.bak"
+    if not applied.exists():
+        return
+    try:
+        if bak.exists() and CONFIG_JSON.exists():
+            original = bak.read_text(encoding="utf-8").strip()
+            if original:
+                import re
+                text = CONFIG_JSON.read_text(encoding="utf-8-sig")
+                text = re.sub(r'("endpoint_v4"\s*:\s*)"[^"]*"',
+                              lambda m: m.group(1) + '"' + original + '"', text, count=1)
+                CONFIG_JSON.write_text(text, encoding="utf-8")
+                log(f"endpoint scanner artığı onarıldı: endpoint_v4 -> {original}")
+    except Exception as e:
+        log(f"endpoint onarımı atlandı: {e}")
+    finally:
+        applied.unlink(missing_ok=True)
+        bak.unlink(missing_ok=True)
 
 
 def install_self():
