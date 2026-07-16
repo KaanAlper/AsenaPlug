@@ -40,6 +40,9 @@ function Get-DnsproxyArgs([string]$listen, [string]$up1, [string]$up2) {
 $KillSwitchExe = Join-Path (Join-Path $env:ProgramFiles "AsenaPlug") "asena-killswitch.exe"
 
 function Enable-KillSwitch([int]$tunIndex, [string[]]$cfRanges, [string]$usqueExe) {
+    # !!! DEVRE DIŞI: WFP permit-tun kuralı tünel trafiğini eşleştirmiyor -> yeni
+    # bağlantıları (DNS/youtube/oyun) blokluyor. asena-on artık bunu ÇAĞIRMIYOR;
+    # kod, Windows'ta düzeltilip test edilene dek ileri kullanım için duruyor.
     Stop-Process -Name "asena-killswitch" -Force -ErrorAction SilentlyContinue   # varsa eskiyi durdur
     if (-not (Test-Path $KillSwitchExe)) {
         Write-Log "kill-switch atlandı: helper yok ($KillSwitchExe). Go ile build alınmamış olabilir."

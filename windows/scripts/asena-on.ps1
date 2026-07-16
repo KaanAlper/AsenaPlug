@@ -86,13 +86,12 @@ function Restore-Dns($prev) {
 }
 
 # --- desired oku ---
-$transport = "http3"; $scope = "selective"; $killswitch = $false
+$transport = "http2"; $scope = "selective"
 if (Test-Path $DesiredFile) {
     try {
         $d = Get-Content $DesiredFile -Raw | ConvertFrom-Json
         if ($d.transport) { $transport = "$($d.transport)" }
         if ($d.scope)     { $scope     = "$($d.scope)" }
-        if ($null -ne $d.killswitch) { $killswitch = [bool]$d.killswitch }
     } catch { Write-Log "desired.json okunamadı, varsayılan kullanılıyor: $_" }
 }
 # CLI argümanları (tray'den) desired.json'ı geçersiz kılar — öncelikli
@@ -251,7 +250,14 @@ if ($scope -eq "full") {
     $targets[$physIface] = $true   # default arayüz sanal olsa bile kapsansın
     if (-not $prevDns) {
         $snap = [ordered]@{}
-        foreach ($name in @($targets.Keys | Sort-Object)) { $snap[$name] = Get-StaticDnsConfig $name }
+        foreach ($name in @($targets.Keys | Sort-Object)) {
+            $curDns = Get-StaticDnsConfig $name
+            # Mevcut statik DNS zaten BİZİM FullDns'imizse (önceki full oturum düzgün
+            # restore etmemiş), "orijinal" diye onu kaydetme -> "" (DHCP) yaz. Yoksa
+            # 1.1.1.1 zincirleme kalıcılaşırdı (state.json'da prevDns=1.1.1.1 bug'ı).
+            if ($curDns -eq $FullDns) { $curDns = "" }
+            $snap[$name] = $curDns
+        }
         $prevDns = $snap
     }
     foreach ($name in @($targets.Keys)) {
@@ -341,15 +347,12 @@ else {
     }
 }
 
-# --- 4b. Kill-switch (opsiyonel; SADECE full mod) ---
-# full+açık -> WFP helper'ı başlat (fail-closed, brick-proof); değilse -> helper'ı durdur.
-if ($scope -eq "full" -and $killswitch) {
-    $tunIdx = (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue).ifIndex
-    Enable-KillSwitch $tunIdx $CfRanges $UsqueExe
-    Write-Log "kill-switch AÇIK (full; WFP dynamic session, TUN idx=$tunIdx / usque / endpoint izinli)"
-} else {
-    Disable-KillSwitch
-}
+# --- 4b. Kill-switch DEVRE DIŞI ---
+# WFP helper'ın permit-tun kuralı tünel trafiğini eşleştirmiyor -> yeni bağlantıları
+# (DNS/youtube/oyun) blokluyordu. Windows'ta test edilip düzeltilene dek HER ZAMAN
+# kapalı; çalışan artık helper varsa durdurulur (dinamik WFP filtreleri kendiliğinden
+# uçar). (Enable-KillSwitch kodu asena-common'da ileride düzeltilmek üzere duruyor.)
+Disable-KillSwitch
 
 # --- 5. state.json yaz (tek doğru kaynak) ---
 $state = [ordered]@{
@@ -361,7 +364,7 @@ $state = [ordered]@{
     prevDns   = $prevDns          # full: adapter -> önceki statik DNS ("" = DHCP); selective: null
     gwIP      = $gwIP             # bağlanınca kullanılan fiziksel gateway (ağ-değişimi tespiti)
     physIface = $physIface        # fiziksel arayüz adı (endpoint pin'i burada)
-    killswitch = ($scope -eq "full" -and $killswitch)   # gerçekten aktif mi (yalnız full)
+    killswitch = $false                                  # kill-switch devre dışı (bkz. 4b)
     started   = (Get-Date).ToString("o")
 }
 $state | ConvertTo-Json -Compress -Depth 4 | Set-Content -Path $StateFile -Encoding UTF8

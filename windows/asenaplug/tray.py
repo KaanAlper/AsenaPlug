@@ -151,7 +151,6 @@ class AsenaTray:
         d = state.read_desired()
         self._sel_transport = d["transport"]
         self._sel_scope = d["scope"]
-        self._sel_killswitch = d["killswitch"]
         self._last_state: dict | None = None
         self._initialized = False
         # --- reconciler durumu (tek hedef, tek timer; thrashing yok) ---
@@ -243,14 +242,6 @@ class AsenaTray:
 
         self.blacklist_menu = QMenu(t("blacklist_menu"))
         self.menu.addMenu(self.blacklist_menu)
-        self.menu.addSeparator()
-
-        # Kill-switch (opsiyonel; sadece full modda etkili): tünel düşerse trafiği kes
-        self.killswitch_action = QAction(t("killswitch"), self.menu)
-        self.killswitch_action.setCheckable(True)
-        self.killswitch_action.setChecked(self._sel_killswitch)
-        self.killswitch_action.triggered.connect(self.toggle_killswitch)
-        self.menu.addAction(self.killswitch_action)
         self.menu.addSeparator()
 
         # Güncellemeleri denetle (GitHub release)
@@ -405,17 +396,6 @@ class AsenaTray:
         self.rebuild_blacklist_menu()
         if self._connected_or_connecting():
             self.set_target(self._sel_transport, s)
-
-    def toggle_killswitch(self, checked: bool):
-        """Kill-switch tercihini KALICI kaydet. Yalnız full modda etkili (asena-on
-        desired.json'dan okur). Full modda BAĞLIYKEN açıp/kapatırsan firewall'u hemen
-        güncellemek için route'ları yeniden uygula; değilsen sonraki full connect'te
-        uygulanır."""
-        self._sel_killswitch = checked
-        state.write_desired(self._sel_transport, self._sel_scope, killswitch=checked)
-        cur = state.current_state()
-        if cur is not None and cur["scope"] == "full":
-            win.run_script("asena-on.ps1", args=["-Transport", cur["transport"], "-Scope", cur["scope"]])
 
     # ------------------------------------------------------------------ control
     # Reconciliation loop (Kubernetes controller / desired-vs-actual deseni):
