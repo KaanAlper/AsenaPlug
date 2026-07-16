@@ -92,7 +92,8 @@ def main():
     # Aynı anda tek tray (logon görevi + elle açış iki tray açmasın)
     if not win.acquire_single_instance():
         sys.exit(0)
-    install.trim_log()   # usque.log sınırsız büyümesin (açılışta boyut kontrolü)
+    install.trim_log()               # usque.log sınırsız büyümesin (açılışta boyut kontrolü)
+    install.heal_scanned_endpoint()  # kaldırılan scanner'ın bozduğu endpoint_v4'ü onar
     AsenaTray().run()
 
 

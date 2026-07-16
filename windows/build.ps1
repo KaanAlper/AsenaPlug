@@ -158,7 +158,6 @@ VSVersionInfo(
         --hidden-import asenaplug.paths `
         --hidden-import asenaplug.win `
         --hidden-import asenaplug.state `
-        --hidden-import asenaplug.endpoint `
         --hidden-import asenaplug.install `
         --hidden-import asenaplug.tray `
         --hidden-import asenaplug.i18n `

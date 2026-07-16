@@ -16,7 +16,7 @@ from PySide6.QtCore import QLocale, QObject, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QSystemTrayIcon
 
-from . import endpoint, i18n, install, state, update, win
+from . import i18n, install, state, update, win
 from .i18n import t
 from .paths import BLACKLIST_PATH, CONFIG_JSON, LOG_FILE, APP_NAME
 
@@ -114,21 +114,6 @@ def _make_icon_fallback(connected: bool) -> QIcon:
     p.drawText(QRect(0, 0, ICON_SIZE, ICON_SIZE), Qt.AlignmentFlag.AlignCenter, "W")
     p.end()
     return QIcon(pixmap)
-
-
-class _EndpointWorker(QObject):
-    """endpoint.optimize()'ı arka planda koşar (bloklayan TCP taraması UI'yi
-    dondurmasın), sonucu Signal ile UI thread'ine verir."""
-    done = Signal(object)            # (ip, ms) | None
-
-    def start(self):
-        threading.Thread(target=self._run, daemon=True).start()
-
-    def _run(self):
-        try:
-            self.done.emit(endpoint.optimize())
-        except Exception:
-            self.done.emit(None)
 
 
 class _NetWatchWorker(QObject):
@@ -268,12 +253,6 @@ class AsenaTray:
         self.menu.addAction(self.killswitch_action)
         self.menu.addSeparator()
 
-        # Bağlantıyı hızlandır: en yakın WARP endpoint'ini LOKAL ölç + uygula
-        self.speed_action = QAction(t("optimize_endpoint"), self.menu)
-        self.speed_action.triggered.connect(self.optimize_endpoint)
-        self.menu.addAction(self.speed_action)
-        self.menu.addSeparator()
-
         # Güncellemeleri denetle (GitHub release)
         self.update_action = QAction(t("check_updates"), self.menu)
         self.update_action.triggered.connect(lambda: self.check_for_updates(silent=False))
@@ -338,27 +317,6 @@ class AsenaTray:
         i18n.save(code)
         self._build_menu()   # setContextMenu + tüm etiketleri yeniden üretir
         self.refresh()       # ikon/tooltip/durum satırını yeni dille güncelle
-
-    # ------------------------------------------------------------ endpoint hızı
-    def optimize_endpoint(self):
-        """En yakın WARP endpoint'ini LOKAL ölç + config.json'a uygula. Ölçüm
-        arka planda; menü/UI donmaz. Etki bir sonraki bağlanışta görünür."""
-        if getattr(self, "_ep_worker", None) is not None:
-            return                                  # zaten sürüyor
-        win.notify(APP_NAME, t("opt_scanning"))
-        self._ep_worker = _EndpointWorker()         # self ref: sinyal boyunca yaşasın
-        self._ep_worker.done.connect(self._on_optimize_done)
-        self._ep_worker.start()
-
-    def _on_optimize_done(self, res):
-        self._ep_worker = None
-        if not res:
-            win.notify(APP_NAME, t("opt_fail"))
-            return
-        ip, ms = res
-        # Bağlıysak yeni endpoint ancak yeniden bağlanınca etkin olur — kullanıcıya söyle
-        key = "opt_done_reconnect" if state.current_state() is not None else "opt_done"
-        win.notify(APP_NAME, t(key, ip=ip, ms=int(ms)))
 
     # ------------------------------------------------------------------ update
     def check_for_updates(self, silent: bool = False):
@@ -541,9 +499,14 @@ class AsenaTray:
             self._reconciling = False
             was = self._issued
             self._issued = None
-            # h3 istendi ama h2'ye düşüldüyse (UDP 443 bloklu ağ) kullanıcıya söyle
+            # h3 istendi ama h2'ye düşüldüyse: BİR KEZ bildir + seçili transport'u
+            # GERÇEĞE eşitle. Yoksa sonraki her scope/ayar değişiminde set_target yine
+            # http3 dener, yine h2'ye düşer ve mesaj TEKRAR TEKRAR çıkardı ("kendim bir
+            # şey değiştirince de diyor" bug'ı). Seçimi h2 yapınca bir daha denenmez.
             cur = state.current_state()
             if isinstance(was, tuple) and cur and cur["transport"] != was[0]:
+                self._sel_transport = cur["transport"]
+                state.write_desired(cur["transport"], cur["scope"])   # kalıcı: h3'ü bırak
                 win.notify(APP_NAME, t("notify_transport_fallback",
                                        got=_T_LABEL.get(cur["transport"], cur["transport"])))
             self.refresh()               # son durumu bildir (reconcile bitti)
@@ -589,16 +552,6 @@ class AsenaTray:
         self._phase_ticks += 1
         limit = 60 if goal != "off" else 30     # ~30s / ~15s (500ms tik)
         if self._phase_ticks > limit:
-            # REVERT-ON-FAILURE: taranmış endpoint tünel açamadıysa (yanlış/ölü IP),
-            # register'ın verdiği bilinen-iyi endpoint'e TEK sefer dön ve baştan dene.
-            if goal != "off" and endpoint.was_applied():
-                endpoint.restore_endpoint()
-                win.notify(APP_NAME, t("opt_reverted"))
-                win.run_script("asena-off.ps1")       # temiz zemin (varsa yarım usque)
-                self._issued = None
-                self._phase_ticks = 0
-                QTimer.singleShot(1500, self._reconcile)
-                return
             self._reconciling = False
             self._issued = None
             tail = _log_tail()

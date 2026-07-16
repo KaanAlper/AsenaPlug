@@ -43,10 +43,11 @@ APP_VERSION = "1.0.0"
 GITHUB_REPO = "KaanAlper/AsenaPlug"
 
 # --- Varsayılan mod ---
-# http3 (QUIC/UDP): daha hızlı. asena-on, UDP 443 bloklu ağda TUN gelmezse otomatik
-# http2'ye (TCP+TLS) düşer -> "h3 hızı, olmazsa h2 sağlamlığı". Sabitçe http2 istersen
-# bunu "http2" yap. (Kullanıcının kayıtlı seçimi desired.json'da; bu yalnız yeni kurulum.)
-DEFAULT_TRANSPORT = "http3"
+# http2 (TCP+TLS): DPI-stealth, TR'de DAYANIKLI. TR ISP'leri http3'ün QUIC/UDP 443'ünü
+# yaygın throttle/blok ediyor -> h3 varsayılan yapılınca tünel kurulamıyordu. Bu yüzden
+# varsayılan http2. (h3 daha düşük gecikmeli ama ağ UDP 443'e izin veriyorsa; kullanıcı
+# elle seçebilir. asena-on h3 seçilip TUN gelmezse yine h2'ye düşer.)
+DEFAULT_TRANSPORT = "http2"
 DEFAULT_SCOPE     = "selective"  # fiziksel default, sadece blacklist Asena'tan
 
 TRANSPORTS = ("http2", "http3")
