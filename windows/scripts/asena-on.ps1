@@ -108,13 +108,12 @@ Write-Log "asena-on: transport=$transport scope=$scope (arg: '$Transport'/'$Scop
 # imkânsız olur; reconciler tek asena-on çağırır (off->on dansı YOK -> thrashing yok).
 $curState = $null
 if (Test-Path $StateFile) { try { $curState = Get-Content $StateFile -Raw | ConvertFrom-Json } catch {} }
-$transportChanged = $curState -and ("$($curState.transport)" -ne $transport)
-$scopeOnlyChanged = $curState -and (-not $transportChanged) -and ("$($curState.scope)" -ne $scope)
-
-if ($transportChanged) {
-    # TRANSPORT değişti: transport usque'nun BAŞLATMA argümanı -> usque restart ŞART.
-    # usque öldür: TUN + üzerindeki TÜM route'lar (split-default + /32'ler) uçar.
-    Write-Log "transport değişti ($($curState.transport) -> $transport): clean slate (usque restart)"
+# DETERMİNİSTİK: çalışan mod (transport VEYA scope) isteneni tutmuyorsa TAM clean-slate.
+# usque öldür -> TUN + üzerindeki TÜM route'lar (split-default + /32'ler) kendiliğinden
+# uçar; NRPT/IPv6/DNS artıklarını da temizle. "Akıllı kısayol" (canlı usque'yu koruyup
+# routing swap) DENENDİ ama yarı-durum bırakıp buglara yol açtı -> her zaman temiz zemin.
+if ($curState -and (("$($curState.transport)" -ne $transport) -or ("$($curState.scope)" -ne $scope))) {
+    Write-Log "mod değişti ($($curState.transport)/$($curState.scope) -> $transport/$scope): clean slate"
     Stop-ScheduledTask -TaskName "AsenaPlug_RouteSync" -ErrorAction SilentlyContinue
     Stop-Process -Name "usque" -Force -ErrorAction SilentlyContinue
     Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
@@ -122,38 +121,16 @@ if ($transportChanged) {
         ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
     Remove-NetFirewallRule -Group $V6Rule -ErrorAction SilentlyContinue
     Remove-NetFirewallRule -Group "AsenaPlug-Full-IPv6Block" -ErrorAction SilentlyContinue
+    # full'den ÇIKILIYORSA kullanıcının DNS'ini geri koy (selective DNS'e dokunmaz)
     if (("$($curState.scope)" -eq "full") -and ($scope -ne "full")) { Restore-Dns $curState.prevDns }
     Remove-Item $StateFile -Force -ErrorAction SilentlyContinue
+    # TUN kaybolana dek bekle — KISA (~2sn): wintun adapter'ı usque ölünce hızlı gider,
+    # gitmezse yeni usque başlarken orphan'ı zaten temizler ("Removed orphaned adapter").
     $w = 0
-    while ((Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue) -and $w -lt 24) {
-        Start-Sleep -Milliseconds 250; $w++
+    while ((Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue) -and $w -lt 10) {
+        Start-Sleep -Milliseconds 200; $w++
     }
-    Write-Log "clean slate tamam (TUN indi)."
-}
-elseif ($scopeOnlyChanged) {
-    # SCOPE değişti (transport AYNI): usque'yu ÖLDÜRME (restart ~20sn'ye mal oluyordu).
-    # Sadece ESKİ scope'un routing'ini temizle; usque + TUN ayakta kalır -> ~2sn geçiş.
-    # Yeni scope routing'i aşağıda (adım 4) kurulur, /32'leri route-sync arka planda.
-    Write-Log "scope değişti ($($curState.scope) -> $scope): usque KORUNUYOR, routing reset"
-    Stop-ScheduledTask -TaskName "AsenaPlug_RouteSync" -ErrorAction SilentlyContinue
-    if ("$($curState.scope)" -eq "full") {
-        # full -> selective: split-default'u kaldır (fiziksel /0 geri devreye girer) +
-        # global IPv6 block + full DNS'i geri al.
-        foreach ($half in @("0.0.0.0/1","128.0.0.0/1")) {
-            Get-NetRoute -DestinationPrefix $half -InterfaceAlias $TunName -ErrorAction SilentlyContinue |
-                Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
-        }
-        Remove-NetFirewallRule -Group "AsenaPlug-Full-IPv6Block" -ErrorAction SilentlyContinue
-        Restore-Dns $curState.prevDns
-    } else {
-        # selective -> full: NRPT + selective IPv6 fail-closed temizle (eski /32'ler
-        # zararsız; birazdan split-default hepsini zaten tünele alır).
-        Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
-            Where-Object { $_.NameServers -contains $ListenDns } |
-            ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
-        Remove-NetFirewallRule -Group $V6Rule -ErrorAction SilentlyContinue
-    }
-    # state.json SİLİNMEZ: usque çalışıyor, pid geçerli (aşağıda yeni scope ile yeniden yazılır).
+    Write-Log "clean slate tamam."
 }
 
 # --- 1. usque başlat (http3 dene, TUN gelmezse http2'ye DÜŞ) ---
