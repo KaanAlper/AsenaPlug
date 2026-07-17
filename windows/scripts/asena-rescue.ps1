@@ -72,6 +72,10 @@ if (-not (Get-Process -Name "usque" -ErrorAction SilentlyContinue)) {
     # Kill-switch artığını temizle: usque çökünce default outbound=Block kalırsa TÜM
     # internet gider. usque yokken bunu KESİN kaldır (brick önleme — rescue'nin görevi).
     Disable-KillSwitch
+    # TUN artık route'ları: usque öldüyse wintun adapteri kalmış olabilir -> süpür.
+    # ($tun ATANMALI — StrictMode 1.0 altında tanımsız değişken referansı script'i
+    #  sonlandırır; diğer scriptlerdeki gibi önce Get-NetAdapter ile al.)
+    $tun = Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue
     if ($tun) {
         Get-NetRoute -InterfaceIndex $tun.InterfaceIndex -ErrorAction SilentlyContinue |
             Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
