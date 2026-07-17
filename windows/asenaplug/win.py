@@ -75,9 +75,11 @@ def run_script(name: str, args: list[str] | None = None,
     if wait:
         subprocess.run(cmd, timeout=timeout, capture_output=True,
                        creationflags=CREATE_NO_WINDOW)
-    else:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         creationflags=CREATE_NO_WINDOW)
+        return None
+    # async: Popen handle'ı döndür -> çağıran single-flight kontrolü yapabilir
+    # (aynı anda iki asena-on çalışıp usque/routing'i bozmasın).
+    return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            creationflags=CREATE_NO_WINDOW)
 
 
 # --- Adapter tespiti (ctypes, powershell yok) ---
