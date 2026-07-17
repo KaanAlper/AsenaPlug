@@ -707,10 +707,16 @@ class AsenaTray:
 
     def reload_dns(self):
         title = f"{APP_NAME} {t('notify_title_blacklist')}"
-        if state.current_state() is None:
+        cur = state.current_state()
+        if cur is None:
             # Kapalıyken yenilemeye GEREK YOK — connect (asena-on) zaten blacklist'i
             # okuyup NRPT + warm-up ile hepsini alır. Sadece bilgilendir.
             win.notify(title, t("notify_apply_on_connect"))
+            return
+        if cur["scope"] == "full":
+            # Full modda HER ŞEY zaten tünelden gidiyor -> blacklist etkisiz. dns-reload
+            # (selective makinesi: dnsproxy+NRPT+route-sync) gereksiz olurdu -> atla.
+            win.notify(title, t("notify_full_no_blacklist"))
             return
         win.run_script("asena-dns-reload.ps1")
         win.notify(title, t("notify_dns_reloading"))
