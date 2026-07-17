@@ -8,7 +8,9 @@
   kopyalar (çalışan tray kapanınca kilit kalkar; install_self retry ile bekler).
 """
 import json
+import contextlib
 import re
+import socket
 import threading
 import urllib.request
 from pathlib import Path
@@ -25,6 +27,24 @@ UPDATE_DIR = DATA_DIR / "update"
 LAST_CHECK = UPDATE_DIR / "last_check"
 AUTO_INTERVAL = 86400          # otomatik denetim en fazla günde 1
 _UA = {"User-Agent": "AsenaPlug-Updater"}
+
+
+@contextlib.contextmanager
+def _force_ipv4():
+    """urllib'i IPv4'e zorla. FULL modda global IPv6 (2000::/3) firewall'la bloklu;
+    GitHub'ın AAAA kaydı var -> urllib IPv6'yı deneyip SESSİZCE düşen SYN'de timeout'a
+    kadar asılı kalıyor -> "denetlenemedi". usque IPv4-only, full'de IPv6 zaten yok
+    sayılıyor -> getaddrinfo'yu AF_INET'e sabitle (bu daemon thread'de tek ağ işi)."""
+    orig = socket.getaddrinfo
+
+    def gai(host, port, family=0, *a, **k):
+        return orig(host, port, socket.AF_INET, *a, **k)
+
+    socket.getaddrinfo = gai
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = orig
 
 
 # ---------------------------------------------------------------- saf mantık
@@ -51,7 +71,7 @@ def check_latest(timeout: int = 15):
     None döner -> tray 'denetlenemedi' der, yanlışlıkla 'en güncel' demez."""
     try:
         req = urllib.request.Request(API_LATEST, headers=_UA)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _force_ipv4(), urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.load(r)
     except Exception:
         return None
@@ -102,7 +122,7 @@ def verify_download(path: Path, sha_url: str | None, timeout: int = 15) -> bool:
         return True
     try:
         req = urllib.request.Request(sha_url, headers=_UA)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _force_ipv4(), urllib.request.urlopen(req, timeout=timeout) as r:
             expected = parse_sha256(r.read().decode("utf-8", "replace"))
     except Exception:
         return True
@@ -117,7 +137,7 @@ def download(url: str, dest: Path, progress_cb=None, timeout: int = 30) -> bool:
     try:
         UPDATE_DIR.mkdir(parents=True, exist_ok=True)
         req = urllib.request.Request(url, headers=_UA)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _force_ipv4(), urllib.request.urlopen(req, timeout=timeout) as r:
             total = int(r.headers.get("Content-Length", 0))
             done = 0
             tmp = Path(dest).with_suffix(".part")
