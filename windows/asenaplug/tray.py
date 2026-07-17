@@ -249,6 +249,7 @@ class AsenaTray:
             self.scope_group.addAction(a)
             self.menu.addAction(a)
             self.scope_actions[s] = a
+        self.menu.addSeparator()   # Yönlendirme ile "Değiştir" arasına ayraç
 
         # DEĞİŞTİR (apply) tuşu: seçim aktif moddan farklıysa belirir. Checkbox'lar
         # SADECE seçim yapar (anında uygulamaz) -> hızlı-tıklama yarışı YOK; değişikliği
@@ -624,10 +625,13 @@ class AsenaTray:
             self.toggle_action.setText(t("disconnect"))
             self.status_action.setText(t("status_switching", detail=gd))
         else:
+            # Kapalı: durum satırı SEÇİLİ modu gösterir -> "Bağlan"ın ne uygulayacağı
+            # baştan belli (tuş sade "Bağlan" kalır; işlem şeffaflığı durum satırında).
+            sd = f"{_T_LABEL.get(self._sel_transport, self._sel_transport)} · {t('scope_' + self._sel_scope)}"
             self.tray.setIcon(self.icon_off)
             self.tray.setToolTip(t("tip_disconnected", app=APP_NAME))
             self.toggle_action.setText(t("connect"))
-            self.status_action.setText(t("status_disconnected"))
+            self.status_action.setText(t("status_ready", detail=sd))
 
         # Checkmark = SEÇİM (her zaman). İşlem SÜRERKEN checkbox'lar KİLİTLİ -> geçiş
         # ortasında mod seçilip "http3 işaretli ama http2 uygulanıyor" karışıklığı olmaz.
