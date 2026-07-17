@@ -195,6 +195,28 @@ def set_autostart(enabled: bool) -> bool:
         return False
 
 
+# --- Çakışan DPI-bypass aracı tespiti ---
+def conflicting_dpi_tool():
+    """AsenaPlug ile ÇAKIŞAN WinDivert-tabanlı bir DPI-bypass aracı çalışıyor mu?
+    GoodbyeDPI/zapret(winws)/ByeDPI, giden paketlerin TTL'ini düşürür (paket-seviyesi
+    bypass) -> usque tüneline giden paketleri de bozar (TTL too small -> düşer) ->
+    hiçbir şey açılmaz. Bulunanın kullanıcı-dostu adını, yoksa None döner."""
+    ps = ("Get-Process -ErrorAction SilentlyContinue | "
+          "Where-Object { $_.ProcessName -match '^(goodbyedpi|winws|ciadpi|byedpi)$' } | "
+          "Select-Object -First 1 -ExpandProperty ProcessName")
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=8, creationflags=CREATE_NO_WINDOW,
+        )
+        name = (out.stdout or "").strip().lower()
+        labels = {"goodbyedpi": "GoodbyeDPI", "winws": "zapret",
+                  "ciadpi": "ByeDPI", "byedpi": "ByeDPI"}
+        return labels.get(name)
+    except Exception:
+        return None
+
+
 # --- Bildirim ---
 def notify(title: str, body: str):
     try:

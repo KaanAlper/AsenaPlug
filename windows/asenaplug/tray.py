@@ -429,7 +429,20 @@ class AsenaTray:
     # yerine; çakışma/thrashing yok, en son hedef kazanır, kendini iyileştirir.
     def set_target(self, transport: str, scope: str):
         state.write_desired(transport, scope, connected=True)   # niyet: BAĞLI (oto-reconnect)
+        self._warn_dpi_conflict()                               # GoodbyeDPI vs açıksa uyar
         self._request((transport, scope))
+
+    def _warn_dpi_conflict(self):
+        """Bağlanırken çakışan WinDivert-DPI aracı (GoodbyeDPI/zapret/ByeDPI) açıksa
+        uyar — o araç TTL'i bozup tüneli çalışmaz kılar. Arka planda (powershell),
+        connect'i BLOKLAMAZ."""
+        import threading
+
+        def check():
+            tool = win.conflicting_dpi_tool()
+            if tool:
+                win.notify(APP_NAME, t("notify_dpi_conflict", tool=tool))
+        threading.Thread(target=check, daemon=True).start()
 
     def disconnect(self):
         state.write_desired(self._sel_transport, self._sel_scope, connected=False)  # niyet: KESİK
