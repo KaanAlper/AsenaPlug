@@ -117,13 +117,17 @@ def _make_icon_fallback(connected: bool) -> QIcon:
 
 
 class _StayMenu(QMenu):
-    """Checkable öğe (transport/scope/autostart) tıklanınca menü KAPANMASIN — kullanıcı
-    birden çok seçim yapıp sonra AYNI menüde 'Değiştir'e basabilsin. Tıklanabilir
-    eylemler (Connect/Değiştir/Quit) normal davranır (kapanır)."""
+    """Checkable öğe (transport/scope/autostart) VEYA 'stay_actions'taki eylem (Değiştir)
+    tıklanınca menü KAPANMASIN — kullanıcı seçim yapıp AYNI menüde 'Değiştir'e basıp
+    'Değiştiriliyor…' ilerlemesini CANLI görebilsin. Diğerleri (Connect/Quit) kapanır."""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.stay_actions = set()   # tıklanınca menü açık kalacak ekstra eylemler
+
     def mouseReleaseEvent(self, e):
         act = self.activeAction()
-        if act is not None and act.isCheckable() and act.isEnabled():
-            act.trigger()          # toggle + triggered (choose_*); super ÇAĞRILMAZ -> açık kalır
+        if act is not None and act.isEnabled() and (act.isCheckable() or act in self.stay_actions):
+            act.trigger()          # toggle/triggered; super ÇAĞRILMAZ -> menü açık kalır
             return
         super().mouseReleaseEvent(e)
 
@@ -294,6 +298,7 @@ class AsenaTray:
         self.apply_action = QAction("", self.menu)
         self.apply_action.triggered.connect(self._apply_selection)
         self.menu.addAction(self.apply_action)
+        self.menu.stay_actions.add(self.apply_action)   # 'Değiştir'e basınca menü KAPANMASIN
         self.menu.addSeparator()
 
         self.blacklist_menu = QMenu(t("blacklist_menu"))
