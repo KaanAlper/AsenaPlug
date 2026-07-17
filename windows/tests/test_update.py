@@ -60,6 +60,45 @@ def test_verify_download_no_sha_url_is_permissive(tmp_path):
     assert u.verify_download(p, None) is True
 
 
+def _patch_urlopen_raw(monkeypatch, data=b"", exc=None):
+    class _Raw:
+        def __init__(self, b):
+            self._b = b
+        def read(self, *a):
+            return self._b
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+    def fake(req, timeout=0):
+        if exc:
+            raise exc
+        return _Raw(data)
+    monkeypatch.setattr(u.urllib.request, "urlopen", fake)
+
+
+def test_verify_download_sha_advertised_but_fetch_fails_is_fail_closed(tmp_path, monkeypatch):
+    # sha REKLAM edildi (sha_url var) ama alınamadı (ağ düşmanı bloklamış olabilir)
+    # -> imzayı atlama, çalıştırma (False).
+    p = tmp_path / "a.exe"; p.write_bytes(b"x")
+    _patch_urlopen_raw(monkeypatch, exc=OSError("blocked"))
+    assert u.verify_download(p, "http://x/a.exe.sha256") is False
+
+
+def test_verify_download_sha_match_is_true(tmp_path, monkeypatch):
+    import hashlib
+    p = tmp_path / "a.exe"; data = b"AsenaPlug"; p.write_bytes(data)
+    h = hashlib.sha256(data).hexdigest()
+    _patch_urlopen_raw(monkeypatch, data=f"{h}  AsenaPlug.exe".encode())
+    assert u.verify_download(p, "http://x/a.exe.sha256") is True
+
+
+def test_verify_download_sha_mismatch_is_false(tmp_path, monkeypatch):
+    p = tmp_path / "a.exe"; p.write_bytes(b"tampered")
+    _patch_urlopen_raw(monkeypatch, data=("a" * 64 + "  AsenaPlug.exe").encode())
+    assert u.verify_download(p, "http://x/a.exe.sha256") is False
+
+
 # --- check_latest (mock'lu ağ; None vs UP_TO_DATE vs tuple ayrımı) ---
 class _FakeResp:
     def __init__(self, payload):

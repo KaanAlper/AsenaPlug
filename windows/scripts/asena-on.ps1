@@ -121,6 +121,14 @@ if ($curState -and (("$($curState.transport)" -ne $transport) -or ("$($curState.
         ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
     Remove-NetFirewallRule -Group $V6Rule -ErrorAction SilentlyContinue
     Remove-NetFirewallRule -Group "AsenaPlug-Full-IPv6Block" -ErrorAction SilentlyContinue
+    # Endpoint pin'leri (/32) FİZİKSEL arayüzde -> usque ölünce UÇMAZ. Mod değişimlerinde
+    # bayat CF /32 route'ları birikmesin (reboot'a kadar kalırdı) -> eski pin'leri sil.
+    if ($curState.pins) {
+        foreach ($p in $curState.pins) {
+            Get-NetRoute -DestinationPrefix $p -ErrorAction SilentlyContinue |
+                Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+        }
+    }
     # full'den ÇIKILIYORSA kullanıcının DNS'ini geri koy (selective DNS'e dokunmaz)
     if (("$($curState.scope)" -eq "full") -and ($scope -ne "full")) { Restore-Dns $curState.prevDns }
     Remove-Item $StateFile -Force -ErrorAction SilentlyContinue
@@ -153,6 +161,7 @@ function Start-UsqueAndWait([bool]$useHttp2, [int]$maxWait = 24) {
     return $null
 }
 
+$startedUsque = $false   # usque'yu BU çalıştırma mı başlattı? (hata-temizliğinde kullanılır)
 $usque = Get-Process -Name "usque" -ErrorAction SilentlyContinue
 if (-not $usque) {
     if (-not (Test-Path $UsqueExe))   { throw "usque.exe yok: $UsqueExe" }
@@ -172,6 +181,7 @@ if (-not $usque) {
         $usquePid = Start-UsqueAndWait $true
     }
     if (-not $usquePid) { throw "TUN adapteri '$TunName' gelmedi (h3+h2 denendi). usque-stderr.log'a bak." }
+    $startedUsque = $true   # başarıyla başlattık -> routing/state hata verirse usque'yu öldür
 } else {
     $usquePid = $usque.Id
     Write-Log "usque zaten çalışıyor (PID $usquePid)."
@@ -193,6 +203,16 @@ Write-Log "TUN '$TunName' ayakta."
 Set-NetIPInterface -InterfaceAlias $TunName -NlMtuBytes 1260 -ErrorAction SilentlyContinue
 Write-Log "TUN MTU -> 1260 (MSS ~1220; yarım yüklenmeyi önler)."
 
+# usque AYAKTA. Routing + state kurulumunu try ile sar: buradan sonra bir throw olursa
+# (ör. gateway yok) ve usque'yu BU script başlattıysa -> çalışan-ama-YÖNLENDİRMESİZ yarım
+# tünel (tray 'disconnected' görür, orphan usque kalır) bırakma; usque'yu öldür + koyduğumuz
+# artıkları geri al + hatayı YENİDEN fırlat (tray temiz 'başarısız' görüp yeniden denesin).
+# (PS'de try/catch AYNI kapsamı paylaşır; $pins/$prevDns catch'in StrictMode altında
+#  görebilmesi için try ÖNCESİNDE tanımlı.)
+$pins = New-Object System.Collections.Generic.List[string]
+$prevDns = $null
+try {
+
 # --- 2. Default gateway / fiziksel arayüz ---
 $defRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
             Where-Object { $_.NextHop -ne "0.0.0.0" } |
@@ -202,8 +222,7 @@ $gwIP      = $defRoute.NextHop
 $physIface = (Get-NetAdapter -InterfaceIndex $defRoute.InterfaceIndex).Name
 Write-Log "Gateway: $gwIP via $physIface"
 
-# --- 3. Endpoint pin (loop önler) ---
-$pins = New-Object System.Collections.Generic.List[string]
+# --- 3. Endpoint pin (loop önler) --- ($pins try öncesinde tanımlandı)
 function Add-Pin([string]$prefix) {
     if ([string]::IsNullOrWhiteSpace($prefix)) { return }
     Get-NetRoute -DestinationPrefix $prefix -ErrorAction SilentlyContinue |
@@ -228,8 +247,8 @@ if ($scope -eq "full" -or -not $endpoint) {
     foreach ($r in $CfRanges) { Add-Pin $r }
 }
 
-# --- 4. Scope'a göre routing ---
-$prevDns = $null   # full modda dolar; state.json'a yazılır (asena-off geri koyar)
+# --- 4. Scope'a göre routing --- ($prevDns try öncesinde $null; full modda dolar,
+#        state.json'a yazılır, asena-off geri koyar)
 if ($scope -eq "full") {
     # split-default: fiziksel default'u SİLMEDEN geçersiz kıl (teardown temiz)
     foreach ($half in @("0.0.0.0/1","128.0.0.0/1")) {
@@ -374,3 +393,25 @@ $state = [ordered]@{
 }
 $state | ConvertTo-Json -Compress -Depth 4 | Set-Content -Path $StateFile -Encoding UTF8
 Write-Log "asena-on OK | $transport/$scope | pid=$usquePid | pins=$($pins -join ',')"
+
+}
+catch {
+    # Routing/state kurulumu YARIDA kaldı. usque'yu BU script başlattıysa: çalışan-ama-
+    # yönlendirmesiz orphan tünel + tray'in göreceği state.json yok -> TEMİZ zemine dön.
+    Write-Log "asena-on HATA (routing/state): $_ -> temizlik yapılıyor"
+    if ($startedUsque) {
+        Stop-Process -Name "usque" -Force -ErrorAction SilentlyContinue   # TUN + route'ları uçar
+        Remove-NetFirewallRule -Group "AsenaPlug-Full-IPv6Block" -ErrorAction SilentlyContinue
+        Remove-NetFirewallRule -Group $V6Rule -ErrorAction SilentlyContinue
+        Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
+            Where-Object { $_.NameServers -contains $ListenDns } |
+            ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
+        if ($prevDns) { Restore-Dns $prevDns }   # full modda DNS 1.1.1.1'e alındıysa geri koy
+        foreach ($p in @($pins)) {               # fiziksel /32 pin artıklarını sil
+            Get-NetRoute -DestinationPrefix $p -ErrorAction SilentlyContinue |
+                Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+        }
+        Remove-Item $StateFile -Force -ErrorAction SilentlyContinue
+    }
+    throw   # tray temiz 'başarısız' görsün (exit != 0), yarım 'connected' değil
+}
