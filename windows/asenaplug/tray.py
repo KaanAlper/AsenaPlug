@@ -143,6 +143,41 @@ class _NetWatchWorker(QObject):
             self.done.emit(None)
 
 
+class _AutostartWorker(QObject):
+    """Autostart görevinin GERÇEK durumunu arka planda okur (powershell -> UI donmasın),
+    sonucu Signal ile UI thread'ine verir."""
+    done = Signal(bool)
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        try:
+            self.done.emit(win.autostart_enabled())
+        except Exception:
+            self.done.emit(True)
+
+
+class _AutostartSetWorker(QObject):
+    """Autostart görevini arka planda aç/kapa (Enable/Disable-ScheduledTask UI'yi
+    dondurmasın). Sonuç: (istenen, başarılı_mı)."""
+    done = Signal(bool, bool)
+
+    def __init__(self, desired: bool):
+        super().__init__()
+        self._desired = desired
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        try:
+            ok = win.set_autostart(self._desired)
+        except Exception:
+            ok = False
+        self.done.emit(self._desired, ok)
+
+
 class AsenaTray:
     def __init__(self):
         global TRAY_REF
@@ -167,6 +202,7 @@ class AsenaTray:
         self._initialized = False
         # --- işlem durumu (süreç-tamamlanma modeli; reconciler/karar-döngüsü YOK) ---
         self._op = None          # süren işlem: ("on",transport,scope) | ("off",) | None
+        self._op_switch = False  # süren "on" işlemi GEÇİŞ mi (bağlıyken) yoksa ilk BAĞLANMA mı
         self._op_ticks = 0       # işlem timeout sayacı (500ms/tik, ~45s)
         self._script_proc = None      # çalışan asena-on/off süreci (single-flight)
         self._register_thread = None  # connect öncesi cihaz kaydı (arka plan)
@@ -174,6 +210,7 @@ class AsenaTray:
         self._updating = False        # güncelleme için çıkışta teardown'ı atla (tünel açık kalsın)
         self._netwatch_worker = None  # ağ-değişimi izleyici (arka plan gateway kontrolü)
         self._net_tick = 0
+        self._netwatch_ticks = 0      # arka-plan re-pin süreç-izleme timeout sayacı
         self._wd_wait = 1             # usque-watchdog: kaç tik sonra yeniden dene
         self._wd_backoff = 1          # üstel geri çekilme (tik cinsinden, ~60s tavan)
 
@@ -338,15 +375,30 @@ class AsenaTray:
 
     # ------------------------------------------------------------------ autostart
     def _refresh_autostart(self):
-        """Autostart görevinin GERÇEK durumunu oku (arka plan powershell) + checkbox."""
-        self._autostart_enabled = win.autostart_enabled()
+        """Autostart görevinin GERÇEK durumunu ARKA PLANDA oku (powershell UI thread'ini
+        DONDURMASIN — QTimer.singleShot slot'u ana thread'de koşar; win.autostart_enabled
+        bloklu subprocess.run). Sonuç sinyalle gelince checkbox güncellenir."""
+        self._autostart_worker = _AutostartWorker()   # self ref: sinyal boyunca yaşasın
+        self._autostart_worker.done.connect(self._on_autostart_probed)
+        self._autostart_worker.start()
+
+    def _on_autostart_probed(self, enabled: bool):
+        self._autostart_worker = None
+        self._autostart_enabled = enabled
         if hasattr(self, "autostart_action"):
-            self.autostart_action.setChecked(self._autostart_enabled)
+            self.autostart_action.setChecked(enabled)
 
     def toggle_autostart(self, checked: bool):
-        """PC başlangıcında başlat: AsenaPlug_Tray logon görevini aç/kapa (silmez)."""
-        if win.set_autostart(checked):
-            self._autostart_enabled = checked
+        """PC başlangıcında başlat: AsenaPlug_Tray logon görevini ARKA PLANDA aç/kapa
+        (silmez; powershell UI'yi dondurmasın). Checkbox iyimser kalır, başarısızsa geri alınır."""
+        self._autostart_set_worker = _AutostartSetWorker(checked)   # self ref: yaşasın
+        self._autostart_set_worker.done.connect(self._on_autostart_set)
+        self._autostart_set_worker.start()
+
+    def _on_autostart_set(self, desired: bool, ok: bool):
+        self._autostart_set_worker = None
+        if ok:
+            self._autostart_enabled = desired
         else:
             self.autostart_action.setChecked(self._autostart_enabled)  # başarısız -> geri al
 
@@ -493,6 +545,10 @@ class AsenaTray:
     def _start_op(self, op):
         """op: ('on',transport,scope) | ('off',). Register gerekiyorsa önce onu halleder."""
         self._op = op
+        # "on" işlemi bağlıyken başladıysa GEÇİŞ (Değiştiriliyor…), değilse BAĞLANMA
+        # (Bağlanıyor…). Tuş/durum metni buna göre. (write_desired current_state'i
+        # değiştirmez -> burada okunan değer gerçek anki durumdur.)
+        self._op_switch = op[0] == "on" and state.current_state() is not None
         self._op_ticks = 0
         self.refresh()                       # UI hemen 'Değiştiriliyor…' göstersin
         if op[0] == "on" and not CONFIG_JSON.exists():
@@ -506,6 +562,15 @@ class AsenaTray:
 
     def _await_register(self):
         if self._register_thread is not None and self._register_thread.is_alive():
+            # Register thread'i (subprocess.run timeout=90) asılırsa UI sonsuza dek
+            # "Bağlanıyor…" ile kilitli kalmasın -> ~100s üst sınır, sonra vazgeç.
+            self._op_ticks += 1
+            if self._op_ticks > 200:
+                self._register_thread = None
+                self._op = None
+                win.notify(APP_NAME, t("register_fail"))
+                self.refresh()
+                return
             QTimer.singleShot(500, self._await_register)
             return
         self._register_thread = None
@@ -516,12 +581,34 @@ class AsenaTray:
             return
         self._launch_script(self._op)
 
+    def _terminate_proc(self):
+        """Süren asena-on/off sürecini ÖLDÜR ve referansı bırak. Timeout/kapanışta
+        orphan bir ps1'in arka planda çalışıp single-flight'ı bozmasını / yönetilmeyen
+        tünel kurmasını engeller."""
+        p = self._script_proc
+        self._script_proc = None
+        if p is not None and p.poll() is None:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+
     def _launch_script(self, op):
-        if op[0] == "off":
-            self._script_proc = win.run_script("asena-off.ps1")
-        else:
-            self._script_proc = win.run_script(
-                "asena-on.ps1", args=["-Transport", op[1], "-Scope", op[2]])
+        # Popen fırlatırsa (powershell yok / spawn hatası) _op TAKILI KALMASIN ->
+        # kalıcı _busy() kilidi olur, uygulama yeniden başlatana dek hiçbir kontrol
+        # çalışmazdı. Hata halinde temizle + bildir.
+        try:
+            if op[0] == "off":
+                self._script_proc = win.run_script("asena-off.ps1")
+            else:
+                self._script_proc = win.run_script(
+                    "asena-on.ps1", args=["-Transport", op[1], "-Scope", op[2]])
+        except Exception:
+            self._script_proc = None
+            self._op = None
+            win.notify(APP_NAME, t("op_fail"))
+            self.refresh()
+            return
         self._op_ticks = 0
         QTimer.singleShot(500, self._poll_op)
 
@@ -553,7 +640,7 @@ class AsenaTray:
         if self._script_proc.poll() is None:      # süreç HÂLÂ çalışıyor
             self._op_ticks += 1
             if self._op_ticks > 90:               # ~45s -> vazgeç
-                self._script_proc = None
+                self._terminate_proc()            # orphan asena-on'u ÖLDÜR (single-flight korunsun)
                 self._op = None
                 tail = _log_tail()
                 win.notify(APP_NAME, t("notify_timeout") + (f"\n{tail}" if tail else ""))
@@ -607,31 +694,50 @@ class AsenaTray:
     def refresh(self):
         st = state.current_state()
         active = st is not None
-        # Bir bağlanma/değiştirme işlemi sürüyor mu (op = ('on', transport, scope))?
-        switching = self._op is not None and self._op[0] == "on"
+        # İşlem ÖNCELİKLİ: op sürerken current_state anlık None/eski olsa da tutarlı
+        # "Bağlanıyor/Değiştiriliyor/Kesiliyor" göster (ara durumlarda titreme olmaz).
+        op = self._op
 
-        if active:
+        if op is not None and op[0] == "on":
+            # BAĞLANMA veya GEÇİŞ sürüyor (usque restart -> anlık current=None): ikon
+            # "on" KALSIN, griye dönmesin -> kullanıcıya tek akıcı işlem gibi görünsün.
+            gd = f"{_T_LABEL.get(op[1], op[1])} · {t('scope_' + op[2])}"
+            self.tray.setIcon(self.icon_on)
+            self.tray.setToolTip(t("tip_switching", app=APP_NAME, detail=gd))
+            self.status_action.setText(
+                t("status_switching" if self._op_switch else "status_connecting", detail=gd))
+        elif op is not None:      # ('off',) -> KESİLİYOR
+            self.tray.setIcon(self.icon_on)   # bitene kadar "on" kalsın, sonra off olur
+            self.tray.setToolTip(t("tip_switching", app=APP_NAME, detail=t("disconnecting")))
+            self.status_action.setText(t("status_disconnecting"))
+        elif active:
             self.tray.setIcon(self.icon_on)
             detail = _detail(st)
             self.tray.setToolTip(t("tip_connected", app=APP_NAME, detail=detail))
-            self.toggle_action.setText(t("disconnect"))
             self.status_action.setText(t("status_connected", detail=detail))
-        elif switching:
-            # GEÇİŞ sürüyor (usque restart -> anlık current=None): ikon "on" KALSIN,
-            # griye dönüp 'disconnect' GÖSTERMESİN -> kullanıcıya tek akıcı işlem gibi.
-            gd = f"{_T_LABEL.get(self._op[1], self._op[1])} · {t('scope_' + self._op[2])}"
-            self.tray.setIcon(self.icon_on)
-            self.tray.setToolTip(t("tip_switching", app=APP_NAME, detail=gd))
-            self.toggle_action.setText(t("disconnect"))
-            self.status_action.setText(t("status_switching", detail=gd))
         else:
             # Kapalı: durum satırı SEÇİLİ modu gösterir -> "Bağlan"ın ne uygulayacağı
             # baştan belli (tuş sade "Bağlan" kalır; işlem şeffaflığı durum satırında).
             sd = f"{_T_LABEL.get(self._sel_transport, self._sel_transport)} · {t('scope_' + self._sel_scope)}"
             self.tray.setIcon(self.icon_off)
             self.tray.setToolTip(t("tip_disconnected", app=APP_NAME))
-            self.toggle_action.setText(t("connect"))
             self.status_action.setText(t("status_ready", detail=sd))
+
+        # --- Bağlan/Kes tuşu: bir işlem sürerken KİLİTLİ + ilerleme metni ---
+        # off -> "Kesiliyor…" | on+geçiş -> "Değiştiriliyor…" | on+ilk -> "Bağlanıyor…".
+        # Arka-plan re-pin (op yok ama script çalışıyor -> _busy) sırasında da KİLİTLE
+        # (metin normal kalır) -> disconnect() zaten no-op olurdu; checkbox'larla tutarlı.
+        if op is not None:
+            if op[0] == "off":
+                self.toggle_action.setText(t("disconnecting"))
+            elif self._op_switch:
+                self.toggle_action.setText(t("switching_btn"))
+            else:
+                self.toggle_action.setText(t("connecting"))
+            self.toggle_action.setEnabled(False)
+        else:
+            self.toggle_action.setText(t("disconnect") if active else t("connect"))
+            self.toggle_action.setEnabled(not self._busy())
 
         # Checkmark = SEÇİM (her zaman). İşlem SÜRERKEN checkbox'lar KİLİTLİ -> geçiş
         # ortasında mod seçilip "http3 işaretli ama http2 uygulanıyor" karışıklığı olmaz.
@@ -644,13 +750,11 @@ class AsenaTray:
             a.setChecked(sk == self._sel_scope)
             a.setEnabled(not locked)
 
-        # DEĞİŞTİR tuşu: bir işlem sürerken (switch VEYA arka-plan asena-on)
-        # "Değiştiriliyor…" (kapalı); bağlı+seçim aktif moddan farklıysa
-        # "Değiştir → {hedef}" (tıklanabilir); yoksa gizli.
-        if switching or self._busy():
-            self.apply_action.setText(t("switching_btn"))
-            self.apply_action.setEnabled(False)
-            self.apply_action.setVisible(True)
+        # DEĞİŞTİR tuşu: bir işlem sürerken GİZLİ — ilerleme artık Bağlan/Kes tuşunda
+        # ("Değiştiriliyor…"), çift gösterge olmasın. Bağlı + seçim aktif moddan
+        # farklıysa "Değiştir → {hedef}" (tıklanabilir); aksi halde gizli.
+        if self._busy():
+            self.apply_action.setVisible(False)
         elif active and (self._sel_transport, self._sel_scope) != (st["transport"], st["scope"]):
             gd = f"{_T_LABEL.get(self._sel_transport, self._sel_transport)} · {t('scope_' + self._sel_scope)}"
             self.apply_action.setText(t("apply_btn", detail=gd))
@@ -659,9 +763,11 @@ class AsenaTray:
         else:
             self.apply_action.setVisible(False)   # kapalı VEYA değişiklik yok
 
-        # İşlem sürerken ARA durumları bildirme; _last_state'i de dondur ki işlem
-        # bitince (op temizlenince) tek "Connected/Disconnected" gelsin.
-        if self._op is None:
+        # İşlem VEYA arka-plan re-pin sürerken ARA durumları bildirme; _last_state'i de
+        # dondur ki iş bitince (busy düşünce) tek "Connected/Disconnected" gelsin.
+        # (net-watch re-pin state.json'u yeniden yazarken anlık None parse -> SAHTE
+        #  "Bağlantı kesildi/bağlandı" çifti gitmesin.)
+        if not self._busy():
             if self._initialized and st != self._last_state:
                 if active:
                     win.notify(APP_NAME, t("notify_connected", detail=_detail(st)))
@@ -713,7 +819,27 @@ class AsenaTray:
         win.notify(APP_NAME, t("notify_net_reapply"))
         self._script_proc = win.run_script(
             "asena-on.ps1", args=["-Transport", cur["transport"], "-Scope", cur["scope"]])
-        self._net_tick = -10   # asena-on bitip state.json'u güncelleyene dek (~45s) tekrar tetikleme
+        # Re-pin sürecini SÜREÇ-TAMAMLANMA ile izle: bitince _script_proc'u bırak,
+        # asılırsa (~45s) ÖLDÜR -> op'suz da olsa _busy() sonsuza dek True kalmasın
+        # (aksi halde checkbox'lar kilitli kalır, watchdog düşen tüneli kurtaramaz).
+        self._netwatch_ticks = 0
+        QTimer.singleShot(500, self._poll_netwatch)
+
+    def _poll_netwatch(self):
+        """Arka-plan re-pin (net-watch asena-on) sürecini izle. Bu arada GERÇEK bir op
+        başladıysa (kullanıcı bağlan/kes) BIRAK — onu _poll_op yönetir."""
+        if self._op is not None or self._script_proc is None:
+            return
+        if self._script_proc.poll() is None:
+            self._netwatch_ticks += 1
+            if self._netwatch_ticks > 90:      # ~45s asılı -> öldür
+                self._terminate_proc()
+                self.refresh()
+                return
+            QTimer.singleShot(500, self._poll_netwatch)
+            return
+        self._script_proc = None               # re-pin bitti -> serbest bırak
+        self.refresh()
 
     def emergency_cleanup(self):
         """Kapanırken Asena açıksa SENKRON kapat ki DNS/route teardown tamamlansın.
@@ -723,7 +849,13 @@ class AsenaTray:
 
         GÜNCELLEME İSTİSNASI: _updating iken teardown ATLANIR — tünel açık kalır,
         yeni tray onu devralır (kesintisiz güncelleme + copy-lock yarışı yok)."""
-        if self._updating or state.current_state() is None:
+        if self._updating:
+            return
+        # Bağlanma ortasında (asena-on uçuşta) çıkılırsa: süreci ÖLDÜR ki arka planda
+        # devam edip YÖNETİLMEYEN bir tünel kurmasın. Sonra state varsa düzgün teardown.
+        if self._op is not None and self._op[0] == "on":
+            self._terminate_proc()
+        if state.current_state() is None:
             return
         try:
             win.run_script("asena-off.ps1", wait=True, timeout=20)

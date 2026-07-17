@@ -61,11 +61,13 @@ def write_desired(transport: str, scope: str, connected: bool | None = None,
         if killswitch is None:
             killswitch = cur["killswitch"]
     DESIRED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DESIRED_FILE.write_text(
-        json.dumps({"transport": t, "scope": s, "connected": bool(connected),
-                    "killswitch": bool(killswitch)}),
-        encoding="utf-8",
-    )
+    data = json.dumps({"transport": t, "scope": s, "connected": bool(connected),
+                       "killswitch": bool(killswitch)})
+    # ATOMİK yaz: asena-on.ps1 (ayrı süreç) desired.json'ı ConvertFrom-Json ile okur;
+    # düz truncate-then-write sırasında YARIM JSON okuyup patlayabilirdi -> temp+replace.
+    tmp = DESIRED_FILE.with_suffix(".tmp")
+    tmp.write_text(data, encoding="utf-8")
+    tmp.replace(DESIRED_FILE)
 
 
 def read_state() -> dict | None:
@@ -142,7 +144,7 @@ def add_domain(domain: str) -> bool:
     BLACKLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     prefix = ""
     if BLACKLIST_PATH.exists():
-        cur = BLACKLIST_PATH.read_text(encoding="utf-8")
+        cur = BLACKLIST_PATH.read_text(encoding="utf-8-sig")   # BOM-farkındalık: read_blacklist ile tutarlı
         if cur and not cur.endswith("\n"):
             prefix = "\n"
     with BLACKLIST_PATH.open("a", encoding="utf-8") as f:

@@ -33,8 +33,12 @@ def acquire_single_instance(name: str = "Global\\AsenaPlug_SingleInstance") -> b
     elevated olduğundan Global namespace'e yazma izni var."""
     try:
         ERROR_ALREADY_EXISTS = 183
-        ctypes.windll.kernel32.CreateMutexW(None, False, name)
-        return ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS
+        # use_last_error=True: son hata çağrı ANINDA ctypes thread-local'ine yakalanır;
+        # ayrı bir GetLastError() FFI çağrısı araya girip last-error'ı ezip mutex'i
+        # yanlışlıkla "yok" gösteremez (fail-open -> iki tray + iki usque yarışı).
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateMutexW(None, False, name)
+        return ctypes.get_last_error() != ERROR_ALREADY_EXISTS
     except Exception:
         return True  # mutex kurulamadıysa engelleme
 

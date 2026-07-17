@@ -29,22 +29,30 @@ AUTO_INTERVAL = 86400          # otomatik denetim en fazla günde 1
 _UA = {"User-Agent": "AsenaPlug-Updater"}
 
 
+_gai_lock = threading.Lock()
+
+
 @contextlib.contextmanager
 def _force_ipv4():
     """urllib'i IPv4'e zorla. FULL modda global IPv6 (2000::/3) firewall'la bloklu;
     GitHub'ın AAAA kaydı var -> urllib IPv6'yı deneyip SESSİZCE düşen SYN'de timeout'a
     kadar asılı kalıyor -> "denetlenemedi". usque IPv4-only, full'de IPv6 zaten yok
-    sayılıyor -> getaddrinfo'yu AF_INET'e sabitle (bu daemon thread'de tek ağ işi)."""
-    orig = socket.getaddrinfo
+    sayılıyor -> getaddrinfo'yu AF_INET'e sabitle.
 
-    def gai(host, port, family=0, *a, **k):
-        return orig(host, port, socket.AF_INET, *a, **k)
+    KİLİT: getaddrinfo patch'i süreç-GENELİdir; iki eşzamanlı denetim/indirme (ör.
+    açılış sessiz denetimi + elle 'Güncelle') iç içe girerse biri diğerinin sarmalayıcısını
+    'orig' sanıp restore'da getaddrinfo'yu KALICI AF_INET'te bırakabilir. Serileştir."""
+    with _gai_lock:
+        orig = socket.getaddrinfo
 
-    socket.getaddrinfo = gai
-    try:
-        yield
-    finally:
-        socket.getaddrinfo = orig
+        def gai(host, port, family=0, *a, **k):
+            return orig(host, port, socket.AF_INET, *a, **k)
+
+        socket.getaddrinfo = gai
+        try:
+            yield
+        finally:
+            socket.getaddrinfo = orig
 
 
 # ---------------------------------------------------------------- saf mantık
@@ -116,8 +124,15 @@ def parse_sha256(text: str) -> str | None:
 def verify_download(path: Path, sha_url: str | None, timeout: int = 15) -> bool:
     """İndirilen exe'yi admin olarak çalıştırmadan önce doğrula.
       - sha_url yok (eski release)         -> True (geriye uyumlu; kanal yine HTTPS)
-      - sha alınamadı/parse edilemedi      -> True (flaky sha yüzünden güncelleme bloke olmasın)
-      - sha var ve EŞLEŞMİYOR               -> False (kurcalanmış/bozuk indirme -> çalıştırma)"""
+      - sha REKLAM edildi ama alınamadı/parse edilemedi -> False (FAIL-CLOSED)
+      - sha var ve EŞLEŞMİYOR               -> False (kurcalanmış/bozuk indirme -> çalıştırma)
+      - sha var ve EŞLEŞİYOR                -> True
+
+    FAIL-CLOSED gerekçesi: sansür-bypass aracı; ağ düşmanı .exe'yi geçirip .sha256'yı
+    SEÇEREK bloklayabilir -> imza atlanır, TLS zaafıyla birleşince kurcalanmış binary
+    admin token'ıyla çalışır. sha ilan edildiyse doğrulanmadan ASLA çalıştırma. (Aynı
+    kanaldan inen küçük .sha256, .exe indiyse neredeyse her zaman iner -> yanlış bloke
+    nadir.)"""
     if not sha_url:
         return True
     try:
@@ -125,9 +140,9 @@ def verify_download(path: Path, sha_url: str | None, timeout: int = 15) -> bool:
         with _force_ipv4(), urllib.request.urlopen(req, timeout=timeout) as r:
             expected = parse_sha256(r.read().decode("utf-8", "replace"))
     except Exception:
-        return True
+        return False   # sha ilan edildi ama alınamadı -> güvenli tarafta kal
     if not expected:
-        return True
+        return False   # sha var ama okunamadı/format bozuk -> doğrulama YAPILAMADI
     actual = sha256_file(path)
     return actual is not None and actual == expected
 

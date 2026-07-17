@@ -72,7 +72,17 @@ Write-Log "başladı."
 
 while ($true) {
     if (-not (Get-NetAdapter -Name $TunName -ErrorAction SilentlyContinue)) {
-        Write-Log "TUN yok — çıkılıyor."
+        # usque ölmüş (TUN yok). NRPT kuralları hâlâ blacklist'i ÖLÜ dnsproxy'ye
+        # (127.0.0.2) yönlendiriyor -> o siteler HİÇ çözülmez (kara delik). Kuralları
+        # kaldır ki normal ISP DNS'ine DÜŞSÜN (sansürlü ama ERİŞİLEBİLİR); tray
+        # watchdog'u asena-on ile yeniden bağlanınca hepsini geri kurar (asena-on
+        # yetkilidir). dnsproxy'yi de durdur (tünelsiz upstream'e ulaşamaz, işe yaramaz).
+        Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
+            Where-Object { $_.NameServers -contains $ListenDns } |
+            ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force -ErrorAction SilentlyContinue }
+        Stop-Process -Name "dnsproxy" -Force -ErrorAction SilentlyContinue
+        Clear-DnsClientCache -ErrorAction SilentlyContinue
+        Write-Log "TUN yok (usque öldü) — NRPT/dnsproxy temizlendi, ISP DNS'ine düşüldü. Çıkılıyor."
         break
     }
 
