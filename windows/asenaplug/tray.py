@@ -159,6 +159,7 @@ class AsenaTray:
         self._phase_ticks = 0
         self._reconciling = False
         self._script_proc = None      # çalışan asena-on/off (single-flight: 2 tane çakışmasın)
+        self._fallback_notified = False  # h3->h2 fallback bir kez bildirildi mi (reconcile başına)
         self._register_thread = None  # connect öncesi cihaz kaydı (arka plan)
         self._autostart_enabled = True  # gerçek durum açılışta asenkron okunur (_refresh_autostart)
         self._updating = False        # güncelleme için çıkışta teardown'ı atla (tünel açık kalsın)
@@ -244,6 +245,13 @@ class AsenaTray:
             self.scope_group.addAction(a)
             self.menu.addAction(a)
             self.scope_actions[s] = a
+
+        # DEĞİŞTİR (apply) tuşu: seçim aktif moddan farklıysa belirir. Checkbox'lar
+        # SADECE seçim yapar (anında uygulamaz) -> hızlı-tıklama yarışı YOK; değişikliği
+        # tek bilinçli "Değiştir" ile uygularsın. İşlem sürerken "Değiştiriliyor…" (kapalı).
+        self.apply_action = QAction("", self.menu)
+        self.apply_action.triggered.connect(self._apply_selection)
+        self.menu.addAction(self.apply_action)
         self.menu.addSeparator()
 
         self.blacklist_menu = QMenu(t("blacklist_menu"))
@@ -413,17 +421,24 @@ class AsenaTray:
         return self._reconciling and self._goal not in (None, "off")
 
     def choose_transport(self, t: str):
+        # SADECE seçim (anında uygulama YOK). Bağlıyken 'Değiştir' tuşu belirir;
+        # kapalıyken 'Connect' uygular. Böylece hızlı-tıklama yarışı olmaz.
         self._sel_transport = t
         state.write_desired(self._sel_transport, self._sel_scope)
-        if self._connected_or_connecting():
-            self.set_target(t, self._sel_scope)
+        self.refresh()
 
     def choose_scope(self, s: str):
         self._sel_scope = s
         state.write_desired(self._sel_transport, self._sel_scope)
         self.rebuild_blacklist_menu()
-        if self._connected_or_connecting():
-            self.set_target(self._sel_transport, s)
+        self.refresh()
+
+    def _apply_selection(self):
+        """'Değiştir' tuşu: seçili modu uygula. Bağlıyken çalışır (kapalıyken Connect
+        kullanılır). İşlem sürerken tuş kapalı olduğundan tekrar tetiklenmez."""
+        if state.current_state() is None or self._reconciling:
+            return
+        self.set_target(self._sel_transport, self._sel_scope)
 
     # ------------------------------------------------------------------ control
     # Reconciliation loop (Kubernetes controller / desired-vs-actual deseni):
@@ -475,6 +490,7 @@ class AsenaTray:
             self._reconciling = True
             self._issued = None
             self._phase_ticks = 0
+            self._fallback_notified = False   # yeni switch -> fallback bildirimi taze
             self._reconcile()
 
     @staticmethod
@@ -519,23 +535,29 @@ class AsenaTray:
 
     def _reconcile(self):
         self.refresh()
+        cur = state.current_state()
+
+        # FALLBACK ALGILAMA (h3->h2): asena-on'a verdiğimiz transport gerçekleşenden
+        # FARKLIYSA bu ağda o transport (h3/UDP 443) YOK. KRİTİK: bekleyen HEDEFTEKİ
+        # h3'ü de GERÇEK transport'a (h2) çevir -> in-flight iken scope değiştirdiysen
+        # (latest-wins) bir sonraki switch h3'ü BİR DAHA 10sn DENEMESİN. Seçim + kalıcı
+        # desired güncellenir; fallback BİR KEZ bildirilir (reconcile başına).
+        if isinstance(self._issued, tuple) and cur is not None and cur["transport"] != self._issued[0]:
+            got = cur["transport"]
+            if isinstance(self._goal, tuple) and self._goal[0] == self._issued[0]:
+                self._goal = (got, self._goal[1])
+            self._sel_transport = got
+            state.write_desired(got, self._goal[1] if isinstance(self._goal, tuple) else got)
+            if not self._fallback_notified:
+                self._fallback_notified = True
+                win.notify(APP_NAME, t("notify_transport_fallback", got=_T_LABEL.get(got, got)))
+
         goal = self._goal
-        action = self._decide(goal, state.current_state(), self._issued)
+        action = self._decide(goal, cur, self._issued)
 
         if action == "done":
             self._reconciling = False
-            was = self._issued
             self._issued = None
-            # h3 istendi ama h2'ye düşüldüyse: BİR KEZ bildir + seçili transport'u
-            # GERÇEĞE eşitle. Yoksa sonraki her scope/ayar değişiminde set_target yine
-            # http3 dener, yine h2'ye düşer ve mesaj TEKRAR TEKRAR çıkardı ("kendim bir
-            # şey değiştirince de diyor" bug'ı). Seçimi h2 yapınca bir daha denenmez.
-            cur = state.current_state()
-            if isinstance(was, tuple) and cur and cur["transport"] != was[0]:
-                self._sel_transport = cur["transport"]
-                state.write_desired(cur["transport"], cur["scope"])   # kalıcı: h3'ü bırak
-                win.notify(APP_NAME, t("notify_transport_fallback",
-                                       got=_T_LABEL.get(cur["transport"], cur["transport"])))
             self.refresh()               # son durumu bildir (reconcile bitti)
             return
 
@@ -647,14 +669,26 @@ class AsenaTray:
             self.toggle_action.setText(t("connect"))
             self.status_action.setText(t("status_disconnected"))
 
-        # Checkmark: bağlıysa gerçek durum, değilse seçili istek
-        # (döngü değişkeni 'tk'/'sk' — global t() çevirmenini gölgelememek için)
-        shown_t = st["transport"] if active else self._sel_transport
-        shown_s = st["scope"] if active else self._sel_scope
+        # Checkmark = SEÇİM (her zaman): kullanıcı ne seçtiyse o işaretli. Aktif mod
+        # durum satırında/tooltip'te. (Döngü değişkeni 'tk'/'sk' — global t()'yi gölgeleme.)
         for tk, a in self.transport_actions.items():
-            a.setChecked(tk == shown_t)
+            a.setChecked(tk == self._sel_transport)
         for sk, a in self.scope_actions.items():
-            a.setChecked(sk == shown_s)
+            a.setChecked(sk == self._sel_scope)
+
+        # DEĞİŞTİR tuşu: geçiş sürerken "Değiştiriliyor…" (kapalı); bağlı+seçim aktif
+        # moddan farklıysa "Değiştir → {hedef}" (tıklanabilir); yoksa gizli.
+        if switching:
+            self.apply_action.setText(t("switching_btn"))
+            self.apply_action.setEnabled(False)
+            self.apply_action.setVisible(True)
+        elif active and (self._sel_transport, self._sel_scope) != (st["transport"], st["scope"]):
+            gd = f"{_T_LABEL.get(self._sel_transport, self._sel_transport)} · {t('scope_' + self._sel_scope)}"
+            self.apply_action.setText(t("apply_btn", detail=gd))
+            self.apply_action.setEnabled(True)
+            self.apply_action.setVisible(True)
+        else:
+            self.apply_action.setVisible(False)   # kapalı VEYA değişiklik yok
 
         # Reconcile sürerken ARA durumları bildirme; _last_state'i de dondur ki
         # geçiş bitince (reconcile kapanınca) tek "Connected/Disconnected" gelsin.
