@@ -302,11 +302,12 @@ class AsenaTray:
 
     # ------------------------------------------------------------------ events
     def toggle(self):
-        """Bağlı değilse bağlan (seçili mod), bağlıysa kes."""
-        if state.current_state() is None:
-            self.set_target(self._sel_transport, self._sel_scope)
-        else:
+        """Bağlı/bağlanıyorsa kes; değilse bağlan. (Geçiş sırasında da 'kes' -> UI'daki
+        Disconnect ile tutarlı; current=None anına aldanıp yeniden connect denemez.)"""
+        if self._connected_or_connecting():
             self.disconnect()
+        else:
+            self.set_target(self._sel_transport, self._sel_scope)
 
     def _on_click(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -614,14 +615,25 @@ class AsenaTray:
     def refresh(self):
         st = state.current_state()
         active = st is not None
-        self.tray.setIcon(self.icon_on if active else self.icon_off)
+        # Bir connect hedefine reconcile sürüyor mu (transport/scope değişimi)?
+        switching = self._reconciling and self._goal not in (None, "off")
 
         if active:
+            self.tray.setIcon(self.icon_on)
             detail = _detail(st)
             self.tray.setToolTip(t("tip_connected", app=APP_NAME, detail=detail))
             self.toggle_action.setText(t("disconnect"))
             self.status_action.setText(t("status_connected", detail=detail))
+        elif switching:
+            # GEÇİŞ sürüyor (usque restart -> anlık current=None): ikon "on" KALSIN,
+            # griye dönüp 'disconnect' GÖSTERMESİN -> kullanıcıya tek akıcı işlem gibi.
+            gd = f"{_T_LABEL.get(self._goal[0], self._goal[0])} · {t('scope_' + self._goal[1])}"
+            self.tray.setIcon(self.icon_on)
+            self.tray.setToolTip(t("tip_switching", app=APP_NAME, detail=gd))
+            self.toggle_action.setText(t("disconnect"))
+            self.status_action.setText(t("status_switching", detail=gd))
         else:
+            self.tray.setIcon(self.icon_off)
             self.tray.setToolTip(t("tip_disconnected", app=APP_NAME))
             self.toggle_action.setText(t("connect"))
             self.status_action.setText(t("status_disconnected"))
