@@ -117,17 +117,19 @@ def _make_icon_fallback(connected: bool) -> QIcon:
 
 
 class _StayMenu(QMenu):
-    """Checkable öğe (transport/scope/autostart) VEYA 'stay_actions'taki eylem (Değiştir)
-    tıklanınca menü KAPANMASIN — kullanıcı seçim yapıp AYNI menüde 'Değiştir'e basıp
-    'Değiştiriliyor…' ilerlemesini CANLI görebilsin. Diğerleri (Connect/Quit) kapanır."""
+    """Menü tıklamada KAPANMASIN — kullanıcı bağlan/kes/mod/dil/autostart ile menüyü açık
+    tutup ilerlemeyi ('Bağlanıyor…/Değiştiriliyor…') CANLI görsün. SADECE close_actions'taki
+    eylemler (Güncellemeleri denetle, Çıkış) menüyü kapatır. Alt-menü açan öğeler (üzerine
+    gelince açılan Dil/Blacklist) normal davranır (act.menu() ile ayırt edilir)."""
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
-        self.stay_actions = set()   # tıklanınca menü açık kalacak ekstra eylemler
+        self.close_actions = set()   # tıklanınca menüyü KAPATACAK eylemler (denylist)
 
     def mouseReleaseEvent(self, e):
         act = self.activeAction()
-        if act is not None and act.isEnabled() and (act.isCheckable() or act in self.stay_actions):
-            act.trigger()          # toggle/triggered; super ÇAĞRILMAZ -> menü açık kalır
+        if (act is not None and act.isEnabled() and act.menu() is None
+                and act not in self.close_actions):
+            act.trigger()          # tetikle ama menüyü AÇIK tut (super ÇAĞRILMAZ)
             return
         super().mouseReleaseEvent(e)
 
@@ -263,8 +265,8 @@ class AsenaTray:
         self.menu.addSeparator()
 
         # Transport grubu (HTTP/2 · HTTP/3 teknik etiket — çevrilmez)
-        hdr_t = self.menu.addAction(t("hdr_transport"))
-        hdr_t.setEnabled(False)
+        self.hdr_t = self.menu.addAction(t("hdr_transport"))
+        self.hdr_t.setEnabled(False)
         self.transport_group = QActionGroup(self.menu)
         self.transport_group.setExclusive(True)
         self.transport_actions = {}
@@ -278,8 +280,8 @@ class AsenaTray:
         self.menu.addSeparator()
 
         # Routing scope grubu
-        hdr_s = self.menu.addAction(t("hdr_routing"))
-        hdr_s.setEnabled(False)
+        self.hdr_s = self.menu.addAction(t("hdr_routing"))
+        self.hdr_s.setEnabled(False)
         self.scope_group = QActionGroup(self.menu)
         self.scope_group.setExclusive(True)
         self.scope_actions = {}
@@ -298,10 +300,9 @@ class AsenaTray:
         self.apply_action = QAction("", self.menu)
         self.apply_action.triggered.connect(self._apply_selection)
         self.menu.addAction(self.apply_action)
-        self.menu.stay_actions.add(self.apply_action)   # 'Değiştir'e basınca menü KAPANMASIN
         self.menu.addSeparator()
 
-        self.blacklist_menu = QMenu(t("blacklist_menu"))
+        self.blacklist_menu = _StayMenu(t("blacklist_menu"))   # reload-DNS vb. menüyü kapatmasın
         self.menu.addMenu(self.blacklist_menu)
         self.menu.addSeparator()
 
@@ -318,8 +319,9 @@ class AsenaTray:
         self.menu.addAction(self.autostart_action)
         self.menu.addSeparator()
 
-        # Dil alt menüsü (çıkışın hemen üstünde) — üzerine gelince diller açılır
-        self.language_menu = QMenu(t("language"))
+        # Dil alt menüsü (çıkışın hemen üstünde) — üzerine gelince diller açılır.
+        # _StayMenu: dil seçince menü KAPANMASIN (yerinde çevrilir, bkz _retranslate_menu).
+        self.language_menu = _StayMenu(t("language"))
         self.language_group = QActionGroup(self.language_menu)
         self.language_group.setExclusive(True)
         cur = i18n.get_language()
@@ -337,6 +339,9 @@ class AsenaTray:
         self.quit_action = QAction(t("quit"), self.menu)
         self.quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(self.quit_action)
+
+        # SADECE bunlar menüyü kapatır (diğer her şey açık kalır — canlı ilerleme).
+        self.menu.close_actions = {self.update_action, self.quit_action}
 
         self.tray.setContextMenu(self.menu)
         # Sadece UCUZ blacklist menüsü her açılışta yenilenir (powershell yok)
@@ -370,13 +375,28 @@ class AsenaTray:
             self.toggle()
 
     def choose_language(self, code: str):
-        """Dili değiştir, kalıcı yaz, menüyü YENİDEN kur (tüm etiketler güncellensin)."""
+        """Dili değiştir, kalıcı yaz, etiketleri YERİNDE çevir (menüyü yeniden KURMA ->
+        dil seçince açık menü kapanmaz; kullanıcı yeni dili canlı görür)."""
         if code == i18n.get_language():
             return
         i18n.set_language(code)
         i18n.save(code)
-        self._build_menu()   # setContextMenu + tüm etiketleri yeniden üretir
-        self.refresh()       # ikon/tooltip/durum satırını yeni dille güncelle
+        self._retranslate_menu()
+
+    def _retranslate_menu(self):
+        """Menüyü yeniden kurmadan tüm etiketleri aktif dile çevir (açık menü korunur).
+        Transport (_T_LABEL) ve dillerin kendi adları çevrilmez -> dokunulmaz."""
+        self.hdr_t.setText(t("hdr_transport"))
+        self.hdr_s.setText(t("hdr_routing"))
+        for sk, a in self.scope_actions.items():
+            a.setText(t(f"scope_{sk}"))
+        self.blacklist_menu.setTitle(t("blacklist_menu"))
+        self.update_action.setText(t("check_updates"))
+        self.autostart_action.setText(t("autostart_boot"))
+        self.language_menu.setTitle(t("language"))
+        self.quit_action.setText(t("quit"))
+        self.refresh()                 # toggle/durum/apply + checkmark/enable
+        self.rebuild_blacklist_menu()  # blacklist başlık/sayaç yeni dille
 
     # ------------------------------------------------------------------ autostart
     def _refresh_autostart(self):
