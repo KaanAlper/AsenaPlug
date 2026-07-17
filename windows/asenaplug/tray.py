@@ -462,7 +462,13 @@ class AsenaTray:
         self._goal = goal
         if self._reconciling:
             return                       # loop çalışıyor; sonraki tik en son hedefi alır
-        self._debounce.start(350)        # debounce: hızlı ardışık tıklamaları birleştir
+        self._debounce.start(500)        # debounce: transport+scope arka arkaya tıklanınca birleşsin
+
+    def _script_busy(self) -> bool:
+        """Bir asena-on/off HÂLÂ çalışıyor mu? TÜM app tek bir asena-on'a izin verir
+        (single-flight): reconciler + net-watch + watchdog aynı kilidi kullanır ki
+        iki asena-on ASLA aynı anda usque/routing'i bozmasın (oscillation/loop yok)."""
+        return self._script_proc is not None and self._script_proc.poll() is None
 
     def _begin_reconcile(self):
         if not self._reconciling:
@@ -561,8 +567,7 @@ class AsenaTray:
         # Yoksa (hem transport hem scope arka arkaya değişince) goal ortada değişip
         # 2. asena-on ilki koşarken başlar -> iki script usque/routing'i AYNI ANDA
         # bozar. Bekleyince: ilk asena-on biter, sonraki tikte yeni goal ile tek asena-on.
-        script_busy = self._script_proc is not None and self._script_proc.poll() is None
-        if self._issued != goal and not script_busy:
+        if self._issued != goal and not self._script_busy():
             if action == "off":
                 self._script_proc = win.run_script("asena-off.ps1")
             else:
@@ -665,7 +670,7 @@ class AsenaTray:
         # Ağ-değişimi izleme: bağlıyken ~15s'te bir fiziksel gateway'i kontrol et.
         # state.json'daki gwIP'den farklıysa (WiFi switch / uykudan dönüş / hotspot)
         # endpoint pin + route'lar bayatlar -> arka planda asena-on ile yeniden pinle.
-        if active and not self._reconciling and not self._updating:
+        if active and not self._reconciling and not self._updating and not self._script_busy():
             self._net_tick += 1
             if self._net_tick >= 5 and self._netwatch_worker is None:
                 self._net_tick = 0
@@ -679,7 +684,8 @@ class AsenaTray:
         # BEKLENMEDİK düştüyse (usque süreç çökmesi — --always-reconnect ağ blip'ini
         # kapsar ama süreç ölümünü değil) BACKOFF'lu yeniden bağlan. Elle kesme
         # (desired.connected=False) tetiklemez; connect denemesi sürerken bekler.
-        busy = self._reconciling or self._updating or self._register_thread is not None
+        busy = (self._reconciling or self._updating or self._script_busy()
+                or self._register_thread is not None)
         fire, self._wd_wait, self._wd_backoff = self._watchdog_step(
             active, state.read_desired()["connected"], busy, self._wd_wait, self._wd_backoff)
         if fire:
@@ -688,7 +694,10 @@ class AsenaTray:
 
     def _on_netwatch(self, live_gw):
         self._netwatch_worker = None
-        if not live_gw or self._reconciling or self._updating:
+        # SINGLE-FLIGHT: reconcile/güncelleme/başka bir asena-on koşuyorsa DOKUNMA
+        # (net-watch'ın asena-on'u mode-switch'in asena-on'uyla çakışıp oscillation
+        # yaratmasın — kullanıcının gördüğü http2<->http3 loop'unun bir kaynağı buydu).
+        if not live_gw or self._reconciling or self._updating or self._script_busy():
             return
         cur = state.current_state()
         if cur is None:
@@ -701,7 +710,8 @@ class AsenaTray:
         # asena-on RESTART ETMEZ; sadece endpoint pin/MTU/DNS'i yeni gateway'e göre
         # tazeler ve state.json'daki gwIP'yi günceller (bir sonraki kontrol eşleşir).
         win.notify(APP_NAME, t("notify_net_reapply"))
-        win.run_script("asena-on.ps1", args=["-Transport", cur["transport"], "-Scope", cur["scope"]])
+        self._script_proc = win.run_script(
+            "asena-on.ps1", args=["-Transport", cur["transport"], "-Scope", cur["scope"]])
         self._net_tick = -10   # asena-on bitip state.json'u güncelleyene dek (~45s) tekrar tetikleme
 
     def emergency_cleanup(self):
