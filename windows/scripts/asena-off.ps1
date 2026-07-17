@@ -71,9 +71,15 @@ Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
 $restored = $false
 if ($state -and $state.prevDns) { Restore-Dns $state.prevDns; $restored = $true }
 $resetAll = (-not $restored) -and ((-not $state) -or ($state.scope -eq "full"))
+# resetAll fallback'i (prevDns yok + full/bilinmeyen): TÜM adapterleri değil, SADECE
+# Asena'nın DNS'ini koyduğu adapterleri (full=1.1.1.1 / eski selective hijack=127.0.0.2)
+# sıfırla. Böylece kullanıcının GERÇEK statik DNS'i (ör. 8.8.8.8) yanlışlıkla DHCP'ye
+# alınıp KAYBOLMAZ. 127.0.0.2 kalıntısı her durumda ($resetAll'dan bağımsız) sıfırlanır.
+$AsenaDns = @($ListenDns, "1.1.1.1")
 Get-NetAdapter -ErrorAction SilentlyContinue | ForEach-Object {
     $cur = (Get-DnsClientServerAddress -InterfaceAlias $_.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses
-    if ($resetAll -or ($cur -contains $ListenDns)) {
+    $isAsena = @($cur | Where-Object { $AsenaDns -contains $_ }).Count -gt 0
+    if (($resetAll -and $isAsena) -or ($cur -contains $ListenDns)) {
         Set-DnsClientServerAddress -InterfaceAlias $_.Name -ResetServerAddresses -ErrorAction SilentlyContinue
     }
 }
