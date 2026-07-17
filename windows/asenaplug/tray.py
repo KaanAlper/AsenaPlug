@@ -12,7 +12,7 @@ import sys
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QLocale, QObject, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QFileSystemWatcher, QLocale, QObject, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QSystemTrayIcon
 
@@ -234,6 +234,18 @@ class AsenaTray:
         self.timer.timeout.connect(self.refresh)
         self.timer.start(3000)
 
+        # Blacklist dosya-izleme: KALICI DEĞİL — sadece "Düzenle" sonrası editörle
+        # yapılan değişiklikleri geçici dinler (aktif düzenleme boyunca; sessizlikten
+        # sonra kendini kapatır -> sistemi yormaz). "Ekle" tuşu ise DOĞRUDAN yeniler.
+        self._bl_watcher = None
+        self._dns_reload_proc = None   # çalışan dns-reload (üst üste binmeyi önle)
+        self._bl_reload_timer = QTimer()          # debounce: hızlı kayıtları birleştir
+        self._bl_reload_timer.setSingleShot(True)
+        self._bl_reload_timer.timeout.connect(self._do_blacklist_reload)
+        self._bl_watch_stop_timer = QTimer()      # sessizlikten sonra dinlemeyi bırak
+        self._bl_watch_stop_timer.setSingleShot(True)
+        self._bl_watch_stop_timer.timeout.connect(self._stop_blacklist_watch)
+
         self.app.aboutToQuit.connect(self.emergency_cleanup)
 
         # Açılışta sessiz güncelleme denetimi (sadece kurulu exe; günde 1 kez)
@@ -359,7 +371,8 @@ class AsenaTray:
         self.blacklist_menu.addSeparator()
         self.blacklist_menu.addAction(t("bl_edit")).triggered.connect(self.open_blacklist)
         self.blacklist_menu.addAction(t("bl_add")).triggered.connect(self.prompt_add_domain)
-        self.blacklist_menu.addAction(t("bl_reload")).triggered.connect(self.reload_dns)
+        # "DNS yenile" tuşu KALDIRILDI: ekleme doğrudan yeniler, düzenleme dosya-izleyiciyle
+        # otomatik yenilenir (kullanıcı kapat/aç yapmasın).
 
     # ------------------------------------------------------------------ events
     def toggle(self):
@@ -691,35 +704,66 @@ class AsenaTray:
         BLACKLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
         BLACKLIST_PATH.touch(exist_ok=True)
         os.startfile(str(BLACKLIST_PATH))
+        self._start_blacklist_watch()   # editörle düzenlerken değişimi geçici dinle
 
     def prompt_add_domain(self):
         domain, ok = QInputDialog.getText(None, t("dlg_add_title"), t("dlg_add_label"))
         if not ok:
             return
         title = t("notify_title_blacklist")
-        if state.add_domain(domain):
-            # Bağlıysa 'DNS yenile ile aktif et'; kapalıysa bağlanınca zaten alınır
-            key = "notify_added" if state.current_state() is not None else "notify_added_offline"
-            win.notify(title, t(key, domain=domain.strip()))
-        else:
+        if not state.add_domain(domain):
             win.notify(title, t("notify_not_added"))
-        self.rebuild_blacklist_menu()
+            return
+        d = domain.strip()
+        # Kapalıysa bağlanınca alınır; açıksa DOĞRUDAN sıcak yenile (kapat/aç YOK).
+        key = "notify_added" if state.current_state() is not None else "notify_added_offline"
+        win.notify(title, t(key, domain=d))
+        self._do_blacklist_reload()     # bağlı+selective ise yeniler; değilse menü sayacı + no-op
 
-    def reload_dns(self):
-        title = f"{APP_NAME} {t('notify_title_blacklist')}"
+    # --- Sıcak yenileme (kapat/aç gerekmez) ---
+    def _do_blacklist_reload(self):
+        """Blacklist değişti -> tüneli koparmadan SICAK yenile. Bağlı+selective değilse
+        sessiz (kapalı: bağlanınca alınır; full: her şey zaten tünelli). Çalışan bir
+        dns-reload varsa atla (üst üste binmesin) veya bir op sürüyorsa bekle."""
+        self.rebuild_blacklist_menu()           # menü sayacı her durumda tazelensin
         cur = state.current_state()
-        if cur is None:
-            # Kapalıyken yenilemeye GEREK YOK — connect (asena-on) zaten blacklist'i
-            # okuyup NRPT + warm-up ile hepsini alır. Sadece bilgilendir.
-            win.notify(title, t("notify_apply_on_connect"))
+        if cur is None or cur["scope"] == "full" or self._busy():
             return
-        if cur["scope"] == "full":
-            # Full modda HER ŞEY zaten tünelden gidiyor -> blacklist etkisiz. dns-reload
-            # (selective makinesi: dnsproxy+NRPT+route-sync) gereksiz olurdu -> atla.
-            win.notify(title, t("notify_full_no_blacklist"))
+        if self._dns_reload_proc is not None and self._dns_reload_proc.poll() is None:
+            self._bl_reload_timer.start(1000)   # önceki bitince tekrar dene
             return
-        win.run_script("asena-dns-reload.ps1")
-        win.notify(title, t("notify_dns_reloading"))
+        self._dns_reload_proc = win.run_script("asena-dns-reload.ps1")
+        win.notify(f"{APP_NAME} {t('notify_title_blacklist')}", t("notify_dns_reloading"))
+
+    # --- Geçici dosya-izleme (SADECE 'Düzenle' sonrası; kalıcı değil) ---
+    def _start_blacklist_watch(self):
+        if self._bl_watcher is None:
+            self._bl_watcher = QFileSystemWatcher()
+            self._bl_watcher.fileChanged.connect(self._on_blacklist_changed)
+            self._bl_watcher.directoryChanged.connect(self._on_blacklist_dir_changed)
+        if BLACKLIST_PATH.exists() and str(BLACKLIST_PATH) not in self._bl_watcher.files():
+            self._bl_watcher.addPath(str(BLACKLIST_PATH))
+        if str(BLACKLIST_PATH.parent) not in self._bl_watcher.directories():
+            self._bl_watcher.addPath(str(BLACKLIST_PATH.parent))
+        self._bl_watch_stop_timer.start(120000)   # ~2 dk sessizlikten sonra dinlemeyi bırak
+
+    def _on_blacklist_changed(self, _path):
+        self._bl_reload_timer.start(800)          # debounce (çok kayıt -> tek yenileme)
+        self._bl_watch_stop_timer.start(120000)   # aktif düzenleme -> pencereyi uzat
+
+    def _on_blacklist_dir_changed(self, _dir):
+        # Editör atomik-kaydettiyse (sil+yarat) dosya izlemesi düşer -> geri ekle
+        p = str(BLACKLIST_PATH)
+        if BLACKLIST_PATH.exists() and p not in self._bl_watcher.files():
+            self._bl_watcher.addPath(p)
+            self._bl_reload_timer.start(800)
+            self._bl_watch_stop_timer.start(120000)
+
+    def _stop_blacklist_watch(self):
+        if self._bl_watcher is not None:
+            paths = self._bl_watcher.files() + self._bl_watcher.directories()
+            if paths:
+                self._bl_watcher.removePaths(paths)
 
     # ------------------------------------------------------------------ poll
     def refresh(self):
