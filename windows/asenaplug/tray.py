@@ -167,6 +167,7 @@ class AsenaTray:
         self._initialized = False
         # --- işlem durumu (süreç-tamamlanma modeli; reconciler/karar-döngüsü YOK) ---
         self._op = None          # süren işlem: ("on",transport,scope) | ("off",) | None
+        self._op_switch = False  # süren "on" işlemi GEÇİŞ mi (bağlıyken) yoksa ilk BAĞLANMA mı
         self._op_ticks = 0       # işlem timeout sayacı (500ms/tik, ~45s)
         self._script_proc = None      # çalışan asena-on/off süreci (single-flight)
         self._register_thread = None  # connect öncesi cihaz kaydı (arka plan)
@@ -493,6 +494,10 @@ class AsenaTray:
     def _start_op(self, op):
         """op: ('on',transport,scope) | ('off',). Register gerekiyorsa önce onu halleder."""
         self._op = op
+        # "on" işlemi bağlıyken başladıysa GEÇİŞ (Değiştiriliyor…), değilse BAĞLANMA
+        # (Bağlanıyor…). Tuş/durum metni buna göre. (write_desired current_state'i
+        # değiştirmez -> burada okunan değer gerçek anki durumdur.)
+        self._op_switch = op[0] == "on" and state.current_state() is not None
         self._op_ticks = 0
         self.refresh()                       # UI hemen 'Değiştiriliyor…' göstersin
         if op[0] == "on" and not CONFIG_JSON.exists():
@@ -607,31 +612,49 @@ class AsenaTray:
     def refresh(self):
         st = state.current_state()
         active = st is not None
-        # Bir bağlanma/değiştirme işlemi sürüyor mu (op = ('on', transport, scope))?
-        switching = self._op is not None and self._op[0] == "on"
+        # İşlem ÖNCELİKLİ: op sürerken current_state anlık None/eski olsa da tutarlı
+        # "Bağlanıyor/Değiştiriliyor/Kesiliyor" göster (ara durumlarda titreme olmaz).
+        op = self._op
 
-        if active:
+        if op is not None and op[0] == "on":
+            # BAĞLANMA veya GEÇİŞ sürüyor (usque restart -> anlık current=None): ikon
+            # "on" KALSIN, griye dönmesin -> kullanıcıya tek akıcı işlem gibi görünsün.
+            gd = f"{_T_LABEL.get(op[1], op[1])} · {t('scope_' + op[2])}"
+            self.tray.setIcon(self.icon_on)
+            self.tray.setToolTip(t("tip_switching", app=APP_NAME, detail=gd))
+            self.status_action.setText(
+                t("status_switching" if self._op_switch else "status_connecting", detail=gd))
+        elif op is not None:      # ('off',) -> KESİLİYOR
+            self.tray.setIcon(self.icon_on)   # bitene kadar "on" kalsın, sonra off olur
+            self.tray.setToolTip(t("tip_switching", app=APP_NAME, detail=t("disconnecting")))
+            self.status_action.setText(t("status_disconnecting"))
+        elif active:
             self.tray.setIcon(self.icon_on)
             detail = _detail(st)
             self.tray.setToolTip(t("tip_connected", app=APP_NAME, detail=detail))
-            self.toggle_action.setText(t("disconnect"))
             self.status_action.setText(t("status_connected", detail=detail))
-        elif switching:
-            # GEÇİŞ sürüyor (usque restart -> anlık current=None): ikon "on" KALSIN,
-            # griye dönüp 'disconnect' GÖSTERMESİN -> kullanıcıya tek akıcı işlem gibi.
-            gd = f"{_T_LABEL.get(self._op[1], self._op[1])} · {t('scope_' + self._op[2])}"
-            self.tray.setIcon(self.icon_on)
-            self.tray.setToolTip(t("tip_switching", app=APP_NAME, detail=gd))
-            self.toggle_action.setText(t("disconnect"))
-            self.status_action.setText(t("status_switching", detail=gd))
         else:
             # Kapalı: durum satırı SEÇİLİ modu gösterir -> "Bağlan"ın ne uygulayacağı
             # baştan belli (tuş sade "Bağlan" kalır; işlem şeffaflığı durum satırında).
             sd = f"{_T_LABEL.get(self._sel_transport, self._sel_transport)} · {t('scope_' + self._sel_scope)}"
             self.tray.setIcon(self.icon_off)
             self.tray.setToolTip(t("tip_disconnected", app=APP_NAME))
-            self.toggle_action.setText(t("connect"))
             self.status_action.setText(t("status_ready", detail=sd))
+
+        # --- Bağlan/Kes tuşu: bir işlem sürerken KİLİTLİ + ilerleme metni ---
+        # off -> "Kesiliyor…" | on+geçiş -> "Değiştiriliyor…" | on+ilk -> "Bağlanıyor…".
+        # (Fonksiyonel koruma zaten var: toggle/disconnect _busy'de no-op; bu UI kilidi.)
+        if op is not None:
+            if op[0] == "off":
+                self.toggle_action.setText(t("disconnecting"))
+            elif self._op_switch:
+                self.toggle_action.setText(t("switching_btn"))
+            else:
+                self.toggle_action.setText(t("connecting"))
+            self.toggle_action.setEnabled(False)
+        else:
+            self.toggle_action.setText(t("disconnect") if active else t("connect"))
+            self.toggle_action.setEnabled(True)
 
         # Checkmark = SEÇİM (her zaman). İşlem SÜRERKEN checkbox'lar KİLİTLİ -> geçiş
         # ortasında mod seçilip "http3 işaretli ama http2 uygulanıyor" karışıklığı olmaz.
@@ -644,13 +667,11 @@ class AsenaTray:
             a.setChecked(sk == self._sel_scope)
             a.setEnabled(not locked)
 
-        # DEĞİŞTİR tuşu: bir işlem sürerken (switch VEYA arka-plan asena-on)
-        # "Değiştiriliyor…" (kapalı); bağlı+seçim aktif moddan farklıysa
-        # "Değiştir → {hedef}" (tıklanabilir); yoksa gizli.
-        if switching or self._busy():
-            self.apply_action.setText(t("switching_btn"))
-            self.apply_action.setEnabled(False)
-            self.apply_action.setVisible(True)
+        # DEĞİŞTİR tuşu: bir işlem sürerken GİZLİ — ilerleme artık Bağlan/Kes tuşunda
+        # ("Değiştiriliyor…"), çift gösterge olmasın. Bağlı + seçim aktif moddan
+        # farklıysa "Değiştir → {hedef}" (tıklanabilir); aksi halde gizli.
+        if self._busy():
+            self.apply_action.setVisible(False)
         elif active and (self._sel_transport, self._sel_scope) != (st["transport"], st["scope"]):
             gd = f"{_T_LABEL.get(self._sel_transport, self._sel_transport)} · {t('scope_' + self._sel_scope)}"
             self.apply_action.setText(t("apply_btn", detail=gd))
