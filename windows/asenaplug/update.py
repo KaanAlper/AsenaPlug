@@ -29,22 +29,30 @@ AUTO_INTERVAL = 86400          # otomatik denetim en fazla günde 1
 _UA = {"User-Agent": "AsenaPlug-Updater"}
 
 
+_gai_lock = threading.Lock()
+
+
 @contextlib.contextmanager
 def _force_ipv4():
     """urllib'i IPv4'e zorla. FULL modda global IPv6 (2000::/3) firewall'la bloklu;
     GitHub'ın AAAA kaydı var -> urllib IPv6'yı deneyip SESSİZCE düşen SYN'de timeout'a
     kadar asılı kalıyor -> "denetlenemedi". usque IPv4-only, full'de IPv6 zaten yok
-    sayılıyor -> getaddrinfo'yu AF_INET'e sabitle (bu daemon thread'de tek ağ işi)."""
-    orig = socket.getaddrinfo
+    sayılıyor -> getaddrinfo'yu AF_INET'e sabitle.
 
-    def gai(host, port, family=0, *a, **k):
-        return orig(host, port, socket.AF_INET, *a, **k)
+    KİLİT: getaddrinfo patch'i süreç-GENELİdir; iki eşzamanlı denetim/indirme (ör.
+    açılış sessiz denetimi + elle 'Güncelle') iç içe girerse biri diğerinin sarmalayıcısını
+    'orig' sanıp restore'da getaddrinfo'yu KALICI AF_INET'te bırakabilir. Serileştir."""
+    with _gai_lock:
+        orig = socket.getaddrinfo
 
-    socket.getaddrinfo = gai
-    try:
-        yield
-    finally:
-        socket.getaddrinfo = orig
+        def gai(host, port, family=0, *a, **k):
+            return orig(host, port, socket.AF_INET, *a, **k)
+
+        socket.getaddrinfo = gai
+        try:
+            yield
+        finally:
+            socket.getaddrinfo = orig
 
 
 # ---------------------------------------------------------------- saf mantık
