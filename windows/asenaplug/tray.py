@@ -159,6 +159,7 @@ class AsenaTray:
         self._phase_ticks = 0
         self._reconciling = False
         self._register_thread = None  # connect öncesi cihaz kaydı (arka plan)
+        self._autostart_enabled = True  # gerçek durum açılışta asenkron okunur (_refresh_autostart)
         self._updating = False        # güncelleme için çıkışta teardown'ı atla (tünel açık kalsın)
         self._netwatch_worker = None  # ağ-değişimi izleyici (arka plan gateway kontrolü)
         self._net_tick = 0
@@ -194,6 +195,10 @@ class AsenaTray:
         # şu an bağlı değilsek, kalan mod ile otomatik geri bağlan (durumu hatırla).
         if d["connected"] and state.current_state() is None:
             QTimer.singleShot(3500, self._auto_reconnect)
+
+        # Autostart görevinin GERÇEK durumunu asenkron oku (powershell; tray'i bloklamaz)
+        if getattr(sys, "frozen", False):
+            QTimer.singleShot(2500, self._refresh_autostart)
 
     # ------------------------------------------------------------------ menu
     def _build_menu(self):
@@ -248,6 +253,13 @@ class AsenaTray:
         self.update_action = QAction(t("check_updates"), self.menu)
         self.update_action.triggered.connect(lambda: self.check_for_updates(silent=False))
         self.menu.addAction(self.update_action)
+
+        # PC başlangıcında başlat (AsenaPlug_Tray logon görevini aç/kapa)
+        self.autostart_action = QAction(t("autostart_boot"), self.menu)
+        self.autostart_action.setCheckable(True)
+        self.autostart_action.setChecked(self._autostart_enabled)
+        self.autostart_action.triggered.connect(self.toggle_autostart)
+        self.menu.addAction(self.autostart_action)
         self.menu.addSeparator()
 
         # Dil alt menüsü (çıkışın hemen üstünde) — üzerine gelince diller açılır
@@ -308,6 +320,20 @@ class AsenaTray:
         i18n.save(code)
         self._build_menu()   # setContextMenu + tüm etiketleri yeniden üretir
         self.refresh()       # ikon/tooltip/durum satırını yeni dille güncelle
+
+    # ------------------------------------------------------------------ autostart
+    def _refresh_autostart(self):
+        """Autostart görevinin GERÇEK durumunu oku (arka plan powershell) + checkbox."""
+        self._autostart_enabled = win.autostart_enabled()
+        if hasattr(self, "autostart_action"):
+            self.autostart_action.setChecked(self._autostart_enabled)
+
+    def toggle_autostart(self, checked: bool):
+        """PC başlangıcında başlat: AsenaPlug_Tray logon görevini aç/kapa (silmez)."""
+        if win.set_autostart(checked):
+            self._autostart_enabled = checked
+        else:
+            self.autostart_action.setChecked(self._autostart_enabled)  # başarısız -> geri al
 
     # ------------------------------------------------------------------ update
     def check_for_updates(self, silent: bool = False):
@@ -403,7 +429,20 @@ class AsenaTray:
     # yerine; çakışma/thrashing yok, en son hedef kazanır, kendini iyileştirir.
     def set_target(self, transport: str, scope: str):
         state.write_desired(transport, scope, connected=True)   # niyet: BAĞLI (oto-reconnect)
+        self._warn_dpi_conflict()                               # GoodbyeDPI vs açıksa uyar
         self._request((transport, scope))
+
+    def _warn_dpi_conflict(self):
+        """Bağlanırken çakışan WinDivert-DPI aracı (GoodbyeDPI/zapret/ByeDPI) açıksa
+        uyar — o araç TTL'i bozup tüneli çalışmaz kılar. Arka planda (powershell),
+        connect'i BLOKLAMAZ."""
+        import threading
+
+        def check():
+            tool = win.conflicting_dpi_tool()
+            if tool:
+                win.notify(APP_NAME, t("notify_dpi_conflict", tool=tool))
+        threading.Thread(target=check, daemon=True).start()
 
     def disconnect(self):
         state.write_desired(self._sel_transport, self._sel_scope, connected=False)  # niyet: KESİK

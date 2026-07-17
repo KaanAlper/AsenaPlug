@@ -12,7 +12,7 @@ import ctypes
 import subprocess
 import sys
 
-from .paths import SCRIPTS_DIR, APP_NAME
+from .paths import SCRIPTS_DIR, APP_NAME, TASKS
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -160,6 +160,59 @@ def current_default_gateway() -> str | None:
         )
         gw = (out.stdout or "").strip()
         return gw or None
+    except Exception:
+        return None
+
+
+# --- Autostart (PC başlangıcı / logon görevi) ---
+def autostart_enabled() -> bool:
+    """AsenaPlug_Tray logon görevi ETKİN mi? (Disabled değilse etkin.)
+    Görev yoksa/bilinmiyorsa True döner (kurulumda etkin kaydedilir)."""
+    tray_task = TASKS["tray"]
+    ps = (f"$t = Get-ScheduledTask -TaskName '{tray_task}' -ErrorAction SilentlyContinue; "
+          "if ($t) { $t.State } else { 'None' }")   # 2. satır normal string -> PS brace literal
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=8, creationflags=CREATE_NO_WINDOW,
+        )
+        return (out.stdout or "").strip() != "Disabled"   # Ready/Running/None -> etkin say
+    except Exception:
+        return True
+
+
+def set_autostart(enabled: bool) -> bool:
+    """AsenaPlug_Tray görevini SİLMEDEN etkinleştir/devre dışı bırak. Başarıda True."""
+    cmd = "Enable-ScheduledTask" if enabled else "Disable-ScheduledTask"
+    ps = f"{cmd} -TaskName '{TASKS['tray']}' -ErrorAction SilentlyContinue | Out-Null"
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW,
+        )
+        return True
+    except Exception:
+        return False
+
+
+# --- Çakışan DPI-bypass aracı tespiti ---
+def conflicting_dpi_tool():
+    """AsenaPlug ile ÇAKIŞAN WinDivert-tabanlı bir DPI-bypass aracı çalışıyor mu?
+    GoodbyeDPI/zapret(winws)/ByeDPI, giden paketlerin TTL'ini düşürür (paket-seviyesi
+    bypass) -> usque tüneline giden paketleri de bozar (TTL too small -> düşer) ->
+    hiçbir şey açılmaz. Bulunanın kullanıcı-dostu adını, yoksa None döner."""
+    ps = ("Get-Process -ErrorAction SilentlyContinue | "
+          "Where-Object { $_.ProcessName -match '^(goodbyedpi|winws|ciadpi|byedpi)$' } | "
+          "Select-Object -First 1 -ExpandProperty ProcessName")
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=8, creationflags=CREATE_NO_WINDOW,
+        )
+        name = (out.stdout or "").strip().lower()
+        labels = {"goodbyedpi": "GoodbyeDPI", "winws": "zapret",
+                  "ciadpi": "ByeDPI", "byedpi": "ByeDPI"}
+        return labels.get(name)
     except Exception:
         return None
 
