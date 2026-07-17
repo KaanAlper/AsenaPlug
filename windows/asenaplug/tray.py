@@ -165,13 +165,10 @@ class AsenaTray:
         self._sel_scope = d["scope"]
         self._last_state: dict | None = None
         self._initialized = False
-        # --- reconciler durumu (tek hedef, tek timer; thrashing yok) ---
-        self._goal = None        # (transport, scope) = bağlan; "off" = kes; None = boşta
-        self._issued = None      # bu hedef için komut verildi mi (issue-once)
-        self._phase_ticks = 0
-        self._reconciling = False
-        self._script_proc = None      # çalışan asena-on/off (single-flight: 2 tane çakışmasın)
-        self._fallback_notified = False  # h3->h2 fallback bir kez bildirildi mi (reconcile başına)
+        # --- işlem durumu (süreç-tamamlanma modeli; reconciler/karar-döngüsü YOK) ---
+        self._op = None          # süren işlem: ("on",transport,scope) | ("off",) | None
+        self._op_ticks = 0       # işlem timeout sayacı (500ms/tik, ~45s)
+        self._script_proc = None      # çalışan asena-on/off süreci (single-flight)
         self._register_thread = None  # connect öncesi cihaz kaydı (arka plan)
         self._autostart_enabled = True  # gerçek durum açılışta asenkron okunur (_refresh_autostart)
         self._updating = False        # güncelleme için çıkışta teardown'ı atla (tünel açık kalsın)
@@ -193,11 +190,6 @@ class AsenaTray:
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh)
         self.timer.start(3000)
-
-        # Debounce: hızlı ardışık tıklamalar (transport+scope) tek işleme birleşsin
-        self._debounce = QTimer()
-        self._debounce.setSingleShot(True)
-        self._debounce.timeout.connect(self._begin_reconcile)
 
         self.app.aboutToQuit.connect(self.emergency_cleanup)
 
@@ -430,7 +422,7 @@ class AsenaTray:
         değişikliği hedefe yansısın — seçim düşmesin."""
         if state.current_state() is not None:
             return True
-        return self._reconciling and self._goal not in (None, "off")
+        return self._op is not None and self._op[0] == "on"   # bağlanma işlemi sürüyor
 
     def choose_transport(self, t: str):
         # SADECE seçim (anında uygulama YOK). Bağlıyken 'Değiştir' tuşu belirir;
@@ -448,7 +440,7 @@ class AsenaTray:
     def _apply_selection(self):
         """'Değiştir' tuşu: seçili modu uygula. Bağlıyken çalışır (kapalıyken Connect
         kullanılır). İşlem sürerken tuş kapalı olduğundan tekrar tetiklenmez."""
-        if state.current_state() is None or self._reconciling:
+        if state.current_state() is None or self._busy():
             return
         self.set_target(self._sel_transport, self._sel_scope)
 
@@ -457,9 +449,12 @@ class AsenaTray:
     # tek HEDEF + tek timer + faz-kilidi. Eski "her tıkta ayrı QTimer zinciri"
     # yerine; çakışma/thrashing yok, en son hedef kazanır, kendini iyileştirir.
     def set_target(self, transport: str, scope: str):
+        """Modu UYGULA (bağlan/değiştir). İşlem sürerken yok sayılır (tek anda tek iş)."""
+        if self._busy():
+            return
         state.write_desired(transport, scope, connected=True)   # niyet: BAĞLI (oto-reconnect)
         self._warn_dpi_conflict()                               # GoodbyeDPI vs açıksa uyar
-        self._request((transport, scope))
+        self._start_op(("on", transport, scope))
 
     def _warn_dpi_conflict(self):
         """Bağlanırken çakışan WinDivert-DPI aracı (GoodbyeDPI/zapret/ByeDPI) açıksa
@@ -474,36 +469,60 @@ class AsenaTray:
         threading.Thread(target=check, daemon=True).start()
 
     def disconnect(self):
+        if self._busy():
+            return
         state.write_desired(self._sel_transport, self._sel_scope, connected=False)  # niyet: KESİK
-        self._request("off")
+        self._start_op(("off",))
 
     def _auto_reconnect(self):
-        """Autostart/update sonrası: niyet 'bağlı' + hâlâ değilsek son modla bağlan.
-        (Gecikme içinde kullanıcı elle bağlandıysa / reconcile başladıysa atla.)"""
+        """Autostart/update sonrası: niyet 'bağlı' + hâlâ değilsek son modla bağlan."""
         d = state.read_desired()
-        if d["connected"] and state.current_state() is None and not self._reconciling:
+        if d["connected"] and state.current_state() is None and not self._busy():
             self.set_target(d["transport"], d["scope"])
 
-    def _request(self, goal):
-        """goal: (transport, scope) = bağlan; 'off' = kes. En son istek kazanır."""
-        self._goal = goal
-        if self._reconciling:
-            return                       # loop çalışıyor; sonraki tik en son hedefi alır
-        self._debounce.start(500)        # debounce: transport+scope arka arkaya tıklanınca birleşsin
-
-    def _script_busy(self) -> bool:
-        """Bir asena-on/off HÂLÂ çalışıyor mu? TÜM app tek bir asena-on'a izin verir
-        (single-flight): reconciler + net-watch + watchdog aynı kilidi kullanır ki
-        iki asena-on ASLA aynı anda usque/routing'i bozmasın (oscillation/loop yok)."""
+    # --- İŞLEM (süreç-tamamlanma modeli) ---------------------------------------
+    # asena-on/off'u BAŞLAT -> sürecin bitmesini BEKLE -> state.json'u BİR KEZ oku.
+    # Karar döngüsü / goal karşılaştırma YOK -> re-issue, oscillation, çift-switch
+    # imkânsız. Tek anda tek işlem (single-flight, _busy ile korunur).
+    def _busy(self) -> bool:
+        if self._op is not None:
+            return True
         return self._script_proc is not None and self._script_proc.poll() is None
 
-    def _begin_reconcile(self):
-        if not self._reconciling:
-            self._reconciling = True
-            self._issued = None
-            self._phase_ticks = 0
-            self._fallback_notified = False   # yeni switch -> fallback bildirimi taze
-            self._reconcile()
+    def _start_op(self, op):
+        """op: ('on',transport,scope) | ('off',). Register gerekiyorsa önce onu halleder."""
+        self._op = op
+        self._op_ticks = 0
+        self.refresh()                       # UI hemen 'Değiştiriliyor…' göstersin
+        if op[0] == "on" and not CONFIG_JSON.exists():
+            win.notify(APP_NAME, t("registering"))
+            self._register_thread = threading.Thread(
+                target=install.ensure_registered, daemon=True)
+            self._register_thread.start()
+            QTimer.singleShot(500, self._await_register)
+            return
+        self._launch_script(op)
+
+    def _await_register(self):
+        if self._register_thread is not None and self._register_thread.is_alive():
+            QTimer.singleShot(500, self._await_register)
+            return
+        self._register_thread = None
+        if not CONFIG_JSON.exists():         # kayıt başarısız -> vazgeç
+            self._op = None
+            win.notify(APP_NAME, t("register_fail"))
+            self.refresh()
+            return
+        self._launch_script(self._op)
+
+    def _launch_script(self, op):
+        if op[0] == "off":
+            self._script_proc = win.run_script("asena-off.ps1")
+        else:
+            self._script_proc = win.run_script(
+                "asena-on.ps1", args=["-Transport", op[1], "-Scope", op[2]])
+        self._op_ticks = 0
+        QTimer.singleShot(500, self._poll_op)
 
     @staticmethod
     def _watchdog_step(active, desired_connected, busy, wait, backoff, cap=20):
@@ -523,108 +542,36 @@ class AsenaTray:
         new_backoff = min(backoff * 2, cap)
         return True, new_backoff, new_backoff
 
-    @staticmethod
-    def _decide(goal, cur, issued=None):
-        """Saf karar: hedefe ulaşıldı mı, değilse hangi komut? Yan etkisiz (test edilebilir).
-        asena-on DECLARATIVE — mod değişince usque'yu kendi içinde restart eder
-        (clean slate). Bu yüzden 'yanlış modda bağlı' -> yine 'on' (off->on DANSI YOK).
-          goal: (transport, scope) | 'off' | None ;  cur: state dict | None
-          issued: bu hedef için asena-on zaten çağrıldı mı (h3->h2 fallback kabulü)
-        Döner: 'done' | 'on' | 'off'."""
-        if goal is None:
-            return "done"
-        if goal == "off":
-            return "done" if cur is None else "off"
-        if cur is None:
-            return "on"
-        if cur["scope"] != goal[1]:
-            return "on"                       # scope tutmuyor -> (yeniden) uygula
-        if cur["transport"] == goal[0]:
-            return "done"
-        # transport farklı: hedefi ZATEN issue ettiysek, fark asena-on'un bilinçli
-        # h3->h2 fallback'ıdır (UDP bloklu ağ) -> kabul et. Aksi halde transport switch uygula.
-        return "done" if issued == goal else "on"
-
-    def _reconcile(self):
-        self.refresh()
-        cur = state.current_state()
-
-        # FALLBACK ALGILAMA (h3->h2): asena-on'a verdiğimiz transport gerçekleşenden
-        # FARKLIYSA bu ağda o transport (h3/UDP 443) YOK. KRİTİK: bekleyen HEDEFTEKİ
-        # h3'ü de GERÇEK transport'a (h2) çevir -> in-flight iken scope değiştirdiysen
-        # (latest-wins) bir sonraki switch h3'ü BİR DAHA 10sn DENEMESİN. Seçim + kalıcı
-        # desired güncellenir; fallback BİR KEZ bildirilir (reconcile başına).
-        if (isinstance(self._issued, tuple) and isinstance(self._goal, tuple)
-                and cur is not None and cur["transport"] != self._issued[0]):
-            got = cur["transport"]
-            if self._goal[0] == self._issued[0]:
-                self._goal = (got, self._goal[1])
-            self._sel_transport = got
-            state.write_desired(got, self._goal[1])
-            if not self._fallback_notified:
-                self._fallback_notified = True
-                win.notify(APP_NAME, t("notify_transport_fallback", got=_T_LABEL.get(got, got)))
-
-        goal = self._goal
-        action = self._decide(goal, cur, self._issued)
-
-        if action == "done":
-            self._reconciling = False
-            self._issued = None
-            self.refresh()               # son durumu bildir (reconcile bitti)
+    def _poll_op(self):
+        """Çalışan asena-on/off SÜRECİNİ bekle. Bitince state.json'u BİR KEZ oku
+        (fallback http2 olabilir), UI'yi gerçek duruma getir. Zaman aşımı ~45s.
+        Sürekli state.json okuyup KARŞILAŞTIRMA/RE-ISSUE yok -> oscillation imkânsız."""
+        if self._script_proc is None:
+            self._op = None
             return
-
-        # Cihaz kaydı yoksa asena-on'u boşuna çağırma ('config.json yok' ile ölür,
-        # kullanıcıya 30sn sonra anlamsız 'zaman aşımı' görünürdü). Kaydı arka
-        # planda dene (blocking ağ çağrısı — UI thread'i dondurmasın), bitene dek
-        # bu döngüde bekle; başarısızsa AÇIKÇA bildir ve vazgeç.
-        if action == "on" and not CONFIG_JSON.exists():
-            if self._register_thread is None:
-                win.notify(APP_NAME, t("registering"))
-                self._register_thread = threading.Thread(
-                    target=install.ensure_registered, daemon=True)
-                self._register_thread.start()
-            elif not self._register_thread.is_alive():
-                # thread bitti ama config hâlâ yok -> kayıt başarısız
-                self._register_thread = None
-                self._reconciling = False
-                self._issued = None
-                win.notify(APP_NAME, t("register_fail"))
+        if self._script_proc.poll() is None:      # süreç HÂLÂ çalışıyor
+            self._op_ticks += 1
+            if self._op_ticks > 90:               # ~45s -> vazgeç
+                self._script_proc = None
+                self._op = None
+                tail = _log_tail()
+                win.notify(APP_NAME, t("notify_timeout") + (f"\n{tail}" if tail else ""))
                 self.refresh()
                 return
-            QTimer.singleShot(500, self._reconcile)
+            QTimer.singleShot(500, self._poll_op)
             return
-        if self._register_thread is not None and not self._register_thread.is_alive():
-            self._register_thread = None
-
-        # SINGLE-FLIGHT + ISSUE-ONCE: her HEDEF için komut BİR kez verilir; ÜSTELİK
-        # önceki asena-on/off HÂLÂ çalışıyorsa YENİ komut verilmez (bitmesini bekle).
-        # Yoksa (hem transport hem scope arka arkaya değişince) goal ortada değişip
-        # 2. asena-on ilki koşarken başlar -> iki script usque/routing'i AYNI ANDA
-        # bozar. Bekleyince: ilk asena-on biter, sonraki tikte yeni goal ile tek asena-on.
-        if self._issued != goal and not self._script_busy():
-            if action == "off":
-                self._script_proc = win.run_script("asena-off.ps1")
-            else:
-                self._script_proc = win.run_script(
-                    "asena-on.ps1", args=["-Transport", goal[0], "-Scope", goal[1]])
-            self._issued = goal
-            self._phase_ticks = 0
-
-        # Timeout: asena-on/off beklenen sürede sonuç vermezse vazgeç. asena-on mod
-        # değişince clean-slate usque restart yapabilir -> ~30sn'ye kadar meşru.
-        self._phase_ticks += 1
-        limit = 60 if goal != "off" else 30     # ~30s / ~15s (500ms tik)
-        if self._phase_ticks > limit:
-            self._reconciling = False
-            self._issued = None
-            tail = _log_tail()
-            msg = t("notify_timeout") + (f"\n{tail}" if tail else "")
-            win.notify(APP_NAME, msg)
-            self.refresh()
-            return
-
-        QTimer.singleShot(500, self._reconcile)
+        # SÜREÇ BİTTİ -> sonucu BİR KEZ oku (asena-on state.json'u en sonda yazar)
+        self._script_proc = None
+        op = self._op
+        self._op = None
+        cur = state.current_state()
+        # h3->h2 fallback (UDP bloklu ağ): seçili transport'u GERÇEĞE eşitle + bildir
+        if op and op[0] == "on" and cur is not None and cur["transport"] != op[1]:
+            self._sel_transport = cur["transport"]
+            state.write_desired(cur["transport"], cur["scope"])
+            win.notify(APP_NAME, t("notify_transport_fallback",
+                                   got=_T_LABEL.get(cur["transport"], cur["transport"])))
+        self.refresh()                            # gerçek durumu göster + bildir
 
     # ------------------------------------------------------------------ blacklist
     def open_blacklist(self):
@@ -659,8 +606,8 @@ class AsenaTray:
     def refresh(self):
         st = state.current_state()
         active = st is not None
-        # Bir connect hedefine reconcile sürüyor mu (transport/scope değişimi)?
-        switching = self._reconciling and self._goal not in (None, "off")
+        # Bir bağlanma/değiştirme işlemi sürüyor mu (op = ('on', transport, scope))?
+        switching = self._op is not None and self._op[0] == "on"
 
         if active:
             self.tray.setIcon(self.icon_on)
@@ -671,7 +618,7 @@ class AsenaTray:
         elif switching:
             # GEÇİŞ sürüyor (usque restart -> anlık current=None): ikon "on" KALSIN,
             # griye dönüp 'disconnect' GÖSTERMESİN -> kullanıcıya tek akıcı işlem gibi.
-            gd = f"{_T_LABEL.get(self._goal[0], self._goal[0])} · {t('scope_' + self._goal[1])}"
+            gd = f"{_T_LABEL.get(self._op[1], self._op[1])} · {t('scope_' + self._op[2])}"
             self.tray.setIcon(self.icon_on)
             self.tray.setToolTip(t("tip_switching", app=APP_NAME, detail=gd))
             self.toggle_action.setText(t("disconnect"))
@@ -689,9 +636,10 @@ class AsenaTray:
         for sk, a in self.scope_actions.items():
             a.setChecked(sk == self._sel_scope)
 
-        # DEĞİŞTİR tuşu: geçiş sürerken "Değiştiriliyor…" (kapalı); bağlı+seçim aktif
-        # moddan farklıysa "Değiştir → {hedef}" (tıklanabilir); yoksa gizli.
-        if switching:
+        # DEĞİŞTİR tuşu: bir işlem sürerken (switch VEYA arka-plan asena-on)
+        # "Değiştiriliyor…" (kapalı); bağlı+seçim aktif moddan farklıysa
+        # "Değiştir → {hedef}" (tıklanabilir); yoksa gizli.
+        if switching or self._busy():
             self.apply_action.setText(t("switching_btn"))
             self.apply_action.setEnabled(False)
             self.apply_action.setVisible(True)
@@ -703,9 +651,9 @@ class AsenaTray:
         else:
             self.apply_action.setVisible(False)   # kapalı VEYA değişiklik yok
 
-        # Reconcile sürerken ARA durumları bildirme; _last_state'i de dondur ki
-        # geçiş bitince (reconcile kapanınca) tek "Connected/Disconnected" gelsin.
-        if not self._reconciling:
+        # İşlem sürerken ARA durumları bildirme; _last_state'i de dondur ki işlem
+        # bitince (op temizlenince) tek "Connected/Disconnected" gelsin.
+        if self._op is None:
             if self._initialized and st != self._last_state:
                 if active:
                     win.notify(APP_NAME, t("notify_connected", detail=_detail(st)))
@@ -717,7 +665,7 @@ class AsenaTray:
         # Ağ-değişimi izleme: bağlıyken ~15s'te bir fiziksel gateway'i kontrol et.
         # state.json'daki gwIP'den farklıysa (WiFi switch / uykudan dönüş / hotspot)
         # endpoint pin + route'lar bayatlar -> arka planda asena-on ile yeniden pinle.
-        if active and not self._reconciling and not self._updating and not self._script_busy():
+        if active and not self._busy() and not self._updating:
             self._net_tick += 1
             if self._net_tick >= 5 and self._netwatch_worker is None:
                 self._net_tick = 0
@@ -731,8 +679,7 @@ class AsenaTray:
         # BEKLENMEDİK düştüyse (usque süreç çökmesi — --always-reconnect ağ blip'ini
         # kapsar ama süreç ölümünü değil) BACKOFF'lu yeniden bağlan. Elle kesme
         # (desired.connected=False) tetiklemez; connect denemesi sürerken bekler.
-        busy = (self._reconciling or self._updating or self._script_busy()
-                or self._register_thread is not None)
+        busy = self._busy() or self._updating
         fire, self._wd_wait, self._wd_backoff = self._watchdog_step(
             active, state.read_desired()["connected"], busy, self._wd_wait, self._wd_backoff)
         if fire:
@@ -741,10 +688,9 @@ class AsenaTray:
 
     def _on_netwatch(self, live_gw):
         self._netwatch_worker = None
-        # SINGLE-FLIGHT: reconcile/güncelleme/başka bir asena-on koşuyorsa DOKUNMA
-        # (net-watch'ın asena-on'u mode-switch'in asena-on'uyla çakışıp oscillation
-        # yaratmasın — kullanıcının gördüğü http2<->http3 loop'unun bir kaynağı buydu).
-        if not live_gw or self._reconciling or self._updating or self._script_busy():
+        # SINGLE-FLIGHT: bir işlem (op) veya başka asena-on koşuyorsa DOKUNMA —
+        # net-watch'ın asena-on'u kullanıcı işlemiyle çakışıp bozmasın.
+        if not live_gw or self._busy() or self._updating:
             return
         cur = state.current_state()
         if cur is None:
