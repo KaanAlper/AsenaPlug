@@ -116,6 +116,18 @@ def _make_icon_fallback(connected: bool) -> QIcon:
     return QIcon(pixmap)
 
 
+class _StayMenu(QMenu):
+    """Checkable öğe (transport/scope/autostart) tıklanınca menü KAPANMASIN — kullanıcı
+    birden çok seçim yapıp sonra AYNI menüde 'Değiştir'e basabilsin. Tıklanabilir
+    eylemler (Connect/Değiştir/Quit) normal davranır (kapanır)."""
+    def mouseReleaseEvent(self, e):
+        act = self.activeAction()
+        if act is not None and act.isCheckable() and act.isEnabled():
+            act.trigger()          # toggle + triggered (choose_*); super ÇAĞRILMAZ -> açık kalır
+            return
+        super().mouseReleaseEvent(e)
+
+
 class _NetWatchWorker(QObject):
     """Fiziksel default gateway'i arka planda okur (powershell -> UI donmasın),
     sonucu Signal ile UI thread'ine verir."""
@@ -204,7 +216,7 @@ class AsenaTray:
 
     # ------------------------------------------------------------------ menu
     def _build_menu(self):
-        self.menu = QMenu()
+        self.menu = _StayMenu()   # checkable seçimlerde menü açık kalır (seç-seç-Değiştir)
 
         # Connect/Disconnect — duruma göre metni değişen, HER ZAMAN tıklanabilir
         self.toggle_action = QAction(t("connect"))
@@ -542,12 +554,13 @@ class AsenaTray:
         # h3'ü de GERÇEK transport'a (h2) çevir -> in-flight iken scope değiştirdiysen
         # (latest-wins) bir sonraki switch h3'ü BİR DAHA 10sn DENEMESİN. Seçim + kalıcı
         # desired güncellenir; fallback BİR KEZ bildirilir (reconcile başına).
-        if isinstance(self._issued, tuple) and cur is not None and cur["transport"] != self._issued[0]:
+        if (isinstance(self._issued, tuple) and isinstance(self._goal, tuple)
+                and cur is not None and cur["transport"] != self._issued[0]):
             got = cur["transport"]
-            if isinstance(self._goal, tuple) and self._goal[0] == self._issued[0]:
+            if self._goal[0] == self._issued[0]:
                 self._goal = (got, self._goal[1])
             self._sel_transport = got
-            state.write_desired(got, self._goal[1] if isinstance(self._goal, tuple) else got)
+            state.write_desired(got, self._goal[1])
             if not self._fallback_notified:
                 self._fallback_notified = True
                 win.notify(APP_NAME, t("notify_transport_fallback", got=_T_LABEL.get(got, got)))
