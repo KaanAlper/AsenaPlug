@@ -629,12 +629,16 @@ class AsenaTray:
             self.toggle_action.setText(t("connect"))
             self.status_action.setText(t("status_disconnected"))
 
-        # Checkmark = SEÇİM (her zaman): kullanıcı ne seçtiyse o işaretli. Aktif mod
-        # durum satırında/tooltip'te. (Döngü değişkeni 'tk'/'sk' — global t()'yi gölgeleme.)
+        # Checkmark = SEÇİM (her zaman). İşlem SÜRERKEN checkbox'lar KİLİTLİ -> geçiş
+        # ortasında mod seçilip "http3 işaretli ama http2 uygulanıyor" karışıklığı olmaz.
+        # (Döngü değişkeni 'tk'/'sk' — global t()'yi gölgeleme.)
+        locked = self._busy()
         for tk, a in self.transport_actions.items():
             a.setChecked(tk == self._sel_transport)
+            a.setEnabled(not locked)
         for sk, a in self.scope_actions.items():
             a.setChecked(sk == self._sel_scope)
+            a.setEnabled(not locked)
 
         # DEĞİŞTİR tuşu: bir işlem sürerken (switch VEYA arka-plan asena-on)
         # "Değiştiriliyor…" (kapalı); bağlı+seçim aktif moddan farklıysa
