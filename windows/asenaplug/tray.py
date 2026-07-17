@@ -158,6 +158,7 @@ class AsenaTray:
         self._issued = None      # bu hedef için komut verildi mi (issue-once)
         self._phase_ticks = 0
         self._reconciling = False
+        self._script_proc = None      # çalışan asena-on/off (single-flight: 2 tane çakışmasın)
         self._register_thread = None  # connect öncesi cihaz kaydı (arka plan)
         self._autostart_enabled = True  # gerçek durum açılışta asenkron okunur (_refresh_autostart)
         self._updating = False        # güncelleme için çıkışta teardown'ı atla (tünel açık kalsın)
@@ -555,15 +556,18 @@ class AsenaTray:
         if self._register_thread is not None and not self._register_thread.is_alive():
             self._register_thread = None
 
-        # ISSUE-ONCE: her HEDEF için komut BİR kez verilir. Aynı hedefe tekrar
-        # asena-on/off gönderilmez -> thrashing imkânsız. Hedef değişirse
-        # (_issued != goal) yeni komut verilir. Mod değişimini asena-on kendi
-        # içinde atomik yapar (usque restart + clean slate), o yüzden off->on yok.
-        if self._issued != goal:
+        # SINGLE-FLIGHT + ISSUE-ONCE: her HEDEF için komut BİR kez verilir; ÜSTELİK
+        # önceki asena-on/off HÂLÂ çalışıyorsa YENİ komut verilmez (bitmesini bekle).
+        # Yoksa (hem transport hem scope arka arkaya değişince) goal ortada değişip
+        # 2. asena-on ilki koşarken başlar -> iki script usque/routing'i AYNI ANDA
+        # bozar. Bekleyince: ilk asena-on biter, sonraki tikte yeni goal ile tek asena-on.
+        script_busy = self._script_proc is not None and self._script_proc.poll() is None
+        if self._issued != goal and not script_busy:
             if action == "off":
-                win.run_script("asena-off.ps1")
+                self._script_proc = win.run_script("asena-off.ps1")
             else:
-                win.run_script("asena-on.ps1", args=["-Transport", goal[0], "-Scope", goal[1]])
+                self._script_proc = win.run_script(
+                    "asena-on.ps1", args=["-Transport", goal[0], "-Scope", goal[1]])
             self._issued = goal
             self._phase_ticks = 0
 
