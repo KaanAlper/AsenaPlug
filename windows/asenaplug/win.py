@@ -171,31 +171,61 @@ def current_default_gateway() -> str | None:
 
 
 # --- Autostart (PC başlangıcı / logon görevi) ---
-def autostart_enabled() -> bool:
-    """AsenaPlug_Tray logon görevi ETKİN mi? (Disabled değilse etkin.)
-    Görev yoksa/bilinmiyorsa True döner (kurulumda etkin kaydedilir)."""
-    tray_task = TASKS["tray"]
-    ps = (f"$t = Get-ScheduledTask -TaskName '{tray_task}' -ErrorAction SilentlyContinue; "
-          "if ($t) { $t.State } else { 'None' }")   # 2. satır normal string -> PS brace literal
+def _tray_task_exists() -> bool:
+    """AsenaPlug_Tray görevi VAR mı (etkin/devre-dışı fark etmez)."""
+    ps = (f"if (Get-ScheduledTask -TaskName '{TASKS['tray']}' -ErrorAction SilentlyContinue) "
+          "{ 'yes' } else { 'no' }")   # 2. parça düz string -> PS brace literal
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             capture_output=True, text=True, timeout=8, creationflags=CREATE_NO_WINDOW,
         )
-        return (out.stdout or "").strip() != "Disabled"   # Ready/Running/None -> etkin say
+        return (out.stdout or "").strip() == "yes"
     except Exception:
-        return True
+        return False
+
+
+def autostart_enabled() -> bool:
+    """AsenaPlug_Tray logon görevi VAR ve ETKİN mi? Görev YOKSA False (eskiden State
+    'None' != 'Disabled' diye True dönüp checkbox 'açık' YALANI söylüyordu; oysa görev
+    yok = boot'ta hiçbir şey başlamıyor). Yalnız Ready/Running = etkin."""
+    tray_task = TASKS["tray"]
+    ps = (f"$t = Get-ScheduledTask -TaskName '{tray_task}' -ErrorAction SilentlyContinue; "
+          "if ($t) { $t.State } else { 'None' }")   # 2. parça düz string -> PS brace literal
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=8, creationflags=CREATE_NO_WINDOW,
+        )
+        return (out.stdout or "").strip() in ("Ready", "Running")
+    except Exception:
+        return False
 
 
 def set_autostart(enabled: bool) -> bool:
-    """AsenaPlug_Tray görevini SİLMEDEN etkinleştir/devre dışı bırak. Başarıda True."""
-    cmd = "Enable-ScheduledTask" if enabled else "Disable-ScheduledTask"
-    ps = f"{cmd} -TaskName '{TASKS['tray']}' -ErrorAction SilentlyContinue | Out-Null"
+    """AsenaPlug_Tray görevini aç/kapa. AÇARKEN görev YOKSA yeniden OLUŞTUR — Enable tek
+    başına eksik görevi geri getirmezdi ('checkbox açık ama boot'ta başlamıyor' bug'ı).
+    KAPATIRKEN silmeden Disable eder. Başarıda True."""
+    if not enabled:
+        ps = f"Disable-ScheduledTask -TaskName '{TASKS['tray']}' -ErrorAction SilentlyContinue | Out-Null"
+        try:
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                           capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW)
+            return True
+        except Exception:
+            return False
+    # enabled=True: görev varsa Enable; YOKSA yeniden kur.
+    if _tray_task_exists():
+        ps = f"Enable-ScheduledTask -TaskName '{TASKS['tray']}' -ErrorAction SilentlyContinue | Out-Null"
+        try:
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                           capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW)
+            return True
+        except Exception:
+            return False
     try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW,
-        )
+        from . import install   # lazy: install win'i import ediyor -> döngü olmasın
+        install.register_tray_task()
         return True
     except Exception:
         return False

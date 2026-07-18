@@ -324,11 +324,24 @@ $p = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunL
 Register-ScheduledTask -TaskName '{name}' -Action $a {register_trigger}-Settings $s -Principal $p | Out-Null
 """)
 
-    # Tray görevi: logon'da YÜKSELTİLMİŞ (Highest) tray, oturum açan kullanıcı olarak.
-    # Kullanıcı yerel admin ise UAC promptu olmadan elevated başlar (autostart + privilege).
+    ps_code = "\n".join(blocks)
+    subprocess.run(
+        ["powershell", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-Command", ps_code],
+        check=True, capture_output=True, creationflags=CREATE_NO_WINDOW,
+    )
+    # Tray görevi ayrı fonksiyonda: autostart checkbox 'aç' derken görev EKSİKSE
+    # win.set_autostart bunu çağırıp yeniden kurabilsin (Enable tek başına eksik
+    # görevi geri getirmez -> checkbox açık ama boot'ta başlamama bug'ı).
+    register_tray_task()
+
+
+def register_tray_task():
+    """AsenaPlug_Tray logon görevini (yeniden) OLUŞTUR: logon'da YÜKSELTİLMİŞ (Highest)
+    tray, oturum açan kullanıcı olarak. Yerel admin ise UAC'siz elevated başlar.
+    Kurulumda + autostart 'aç'ta (görev yoksa) çağrılır."""
     exe, arg = _tray_launch()
     arg_part = f"-Argument '{arg}' " if arg else ""
-    blocks.append(f"""
+    ps_code = f"""
 Unregister-ScheduledTask -TaskName '{TASKS["tray"]}' -Confirm:$false -ErrorAction SilentlyContinue
 $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $a = New-ScheduledTaskAction -Execute '{exe}' {arg_part}
@@ -337,9 +350,7 @@ $s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Days 3650) 
 $s.Priority = 4   # default 7 (below-normal) -> 4: logon kalabalığında daha erken başlar
 $p = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Highest
 Register-ScheduledTask -TaskName '{TASKS["tray"]}' -Action $a -Trigger $t -Settings $s -Principal $p | Out-Null
-""")
-
-    ps_code = "\n".join(blocks)
+"""
     subprocess.run(
         ["powershell", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-Command", ps_code],
         check=True, capture_output=True, creationflags=CREATE_NO_WINDOW,
