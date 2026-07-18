@@ -116,6 +116,25 @@ def _make_icon_fallback(connected: bool) -> QIcon:
     return QIcon(pixmap)
 
 
+# Menü eylem renk noktaları: Kes = açık kırmızı, Bağlan/Değiştir = açık yeşil.
+_DOT_RED = "#ff6b6b"
+_DOT_GREEN = "#69db7c"
+
+
+def _dot_icon(hex_color: str, size: int = 12) -> QIcon:
+    """Menü öğesi için dolu renkli daire ikonu (durum-renk ipucu). QApplication
+    var olmalı -> AsenaTray.__init__ içinde (icon_on/off yanında) oluşturulur."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(hex_color))
+    p.drawEllipse(1, 1, size - 2, size - 2)
+    p.end()
+    return QIcon(pm)
+
+
 class _StayMenu(QMenu):
     """Menü tıklamada KAPANMASIN — kullanıcı bağlan/kes/mod/dil/autostart ile menüyü açık
     tutup ilerlemeyi ('Bağlanıyor…/Değiştiriliyor…') CANLI görsün. SADECE close_actions'taki
@@ -199,6 +218,10 @@ class AsenaTray:
 
         self.icon_on = make_icon(True)
         self.icon_off = make_icon(False)
+        # Menü eylem renk noktaları (Kes=kırmızı, Bağlan/Değiştir=yeşil) — _build_menu/
+        # refresh ONLARI okur, o yüzden BURADA (menü kurulmadan önce) oluşturulur.
+        self._dot_green = _dot_icon(_DOT_GREEN)
+        self._dot_red = _dot_icon(_DOT_RED)
 
         # Tray'in seçili istediği (kullanıcı seçimi)
         d = state.read_desired()
@@ -310,6 +333,7 @@ class AsenaTray:
         # SADECE seçim yapar (anında uygulamaz) -> hızlı-tıklama yarışı YOK; değişikliği
         # tek bilinçli "Değiştir" ile uygularsın. İşlem sürerken "Değiştiriliyor…" (kapalı).
         self.apply_action = QAction("", self.menu)
+        self.apply_action.setIcon(self._dot_green)   # Değiştir = açık yeşil
         self.apply_action.triggered.connect(self._apply_selection)
         self.menu.addAction(self.apply_action)
         self.menu.addSeparator()
@@ -842,13 +866,17 @@ class AsenaTray:
         if op is not None:
             if op[0] == "off":
                 self.toggle_action.setText(t("disconnecting"))
+                self.toggle_action.setIcon(self._dot_red)      # kesiliyor -> kırmızı
             elif self._op_switch:
                 self.toggle_action.setText(t("switching_btn"))
+                self.toggle_action.setIcon(self._dot_green)    # değiştiriliyor -> yeşil
             else:
                 self.toggle_action.setText(t("connecting"))
+                self.toggle_action.setIcon(self._dot_green)    # bağlanıyor -> yeşil
             self.toggle_action.setEnabled(False)
         else:
             self.toggle_action.setText(t("disconnect") if active else t("connect"))
+            self.toggle_action.setIcon(self._dot_red if active else self._dot_green)  # kes=kırmızı, bağlan=yeşil
             self.toggle_action.setEnabled(not self._busy())
 
         # Checkmark = SEÇİM (her zaman). İşlem SÜRERKEN checkbox'lar KİLİTLİ -> geçiş
