@@ -556,7 +556,7 @@ LANGUAGES = [
 ]
 TRANSLATIONS = {
     "en": {
-        "disconnect": "Disconnect", "force_asena": "Force through Asena",
+        "connect": "Connect", "disconnect": "Disconnect", "force_asena": "Force through Asena",
         "blacklist_menu": "Blacklist", "language": "Language", "quit": "Quit",
         "bypass_through": "Through Asena:",
         "bypass_iface_item": "  ✓ {name}  (iface)",
@@ -585,7 +585,7 @@ TRANSLATIONS = {
         "notify_connected": "Connected ({detail})", "notify_disconnected": "Disconnected",
     },
     "de": {
-        "disconnect": "Trennen", "force_asena": "Über Asena erzwingen",
+        "connect": "Verbinden", "disconnect": "Trennen", "force_asena": "Über Asena erzwingen",
         "blacklist_menu": "Blacklist", "language": "Sprache", "quit": "Beenden",
         "bypass_through": "Über Asena:",
         "bypass_iface_item": "  ✓ {name}  (iface)",
@@ -615,7 +615,7 @@ TRANSLATIONS = {
         "notify_connected": "Verbunden ({detail})", "notify_disconnected": "Getrennt",
     },
     "es": {
-        "disconnect": "Desconectar", "force_asena": "Forzar por Asena",
+        "connect": "Conectar", "disconnect": "Desconectar", "force_asena": "Forzar por Asena",
         "blacklist_menu": "Lista negra", "language": "Idioma", "quit": "Salir",
         "bypass_through": "Por Asena:",
         "bypass_iface_item": "  ✓ {name}  (iface)",
@@ -644,7 +644,7 @@ TRANSLATIONS = {
         "notify_connected": "Conectado ({detail})", "notify_disconnected": "Desconectado",
     },
     "fr": {
-        "disconnect": "Se déconnecter", "force_asena": "Forcer via Asena",
+        "connect": "Se connecter", "disconnect": "Se déconnecter", "force_asena": "Forcer via Asena",
         "blacklist_menu": "Liste noire", "language": "Langue", "quit": "Quitter",
         "bypass_through": "Via Asena :",
         "bypass_iface_item": "  ✓ {name}  (iface)",
@@ -673,7 +673,7 @@ TRANSLATIONS = {
         "notify_connected": "Connecté ({detail})", "notify_disconnected": "Déconnecté",
     },
     "tr": {
-        "disconnect": "Bağlantıyı kes", "force_asena": "Asena'a zorla",
+        "connect": "Bağlan", "disconnect": "Bağlantıyı kes", "force_asena": "Asena'a zorla",
         "blacklist_menu": "Blacklist", "language": "Dil", "quit": "Çıkış",
         "bypass_through": "Asena'tan geçen:",
         "bypass_iface_item": "  ✓ {name}  (iface)",
@@ -998,23 +998,6 @@ class _StayMenu(QMenu):
         super().mouseReleaseEvent(e)
 
 
-# Menu eylem renk noktalari: Kes = acik kirmizi, Baglan (HTTP/2·HTTP/3) = acik yesil.
-DOT_RED = QColor(255, 107, 107)     # #ff6b6b
-DOT_GREEN = QColor(105, 219, 124)   # #69db7c
-
-
-def _dot_icon(color, size=12):
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(color)
-    p.drawEllipse(1, 1, size - 2, size - 2)
-    p.end()
-    return QIcon(pm)
-
-
 class AsenaTray:
     def __init__(self):
         global SLICE_PROCS
@@ -1037,9 +1020,6 @@ class AsenaTray:
 
         self.icon_on = make_icon(True)
         self.icon_off = make_icon(False)
-        # Menu renk noktalari (QApplication sonrasi, _build_menu ONCESI olusturulur)
-        self._dot_green = _dot_icon(DOT_GREEN)   # baglan (HTTP/2·HTTP/3)
-        self._dot_red = _dot_icon(DOT_RED)       # kes (disconnect)
 
         # Blacklist dosya-izleme: KALICI DEGIL — sadece "Duzenle" sonrasi editoru
         # dinler, sessizlikten sonra kendini kapatir. "Domain ekle" DOGRUDAN yeniler.
@@ -1070,18 +1050,17 @@ class AsenaTray:
 
     def _build_menu(self):
         self.menu = _StayMenu()
-        self.disconnect_action = QAction(t("disconnect"))
-        self.disconnect_action.setIcon(self._dot_red)           # Kes = acik kirmizi
-        self.disconnect_action.triggered.connect(self.disconnect)
+        # Tek toggle: kapaliyken "Baglan" (http2 ile baglar), bagliyken "Baglantiyi kes"
+        # (metin refresh'te duruma gore ayarlanir -> kapaliyken olu 'Kes' ogesi olmaz).
+        self.toggle_action = QAction(t("connect"))
+        self.toggle_action.triggered.connect(self.toggle)
 
         self.http2_action = QAction("HTTP/2")   # teknik etiket — çevrilmez
         self.http2_action.setCheckable(True)
-        self.http2_action.setIcon(self._dot_green)              # baglan = acik yesil
         self.http2_action.triggered.connect(lambda: self.set_mode("http2"))
 
         self.http3_action = QAction("HTTP/3")
         self.http3_action.setCheckable(True)
-        self.http3_action.setIcon(self._dot_green)
         self.http3_action.triggered.connect(lambda: self.set_mode("http3"))
 
         self.bypass_menu = _StayMenu(t("force_asena"))
@@ -1103,7 +1082,7 @@ class AsenaTray:
         self.quit_action = QAction(t("quit"))
         self.quit_action.triggered.connect(self.app.quit)
 
-        self.menu.addAction(self.disconnect_action)
+        self.menu.addAction(self.toggle_action)
         self.menu.addSeparator()
         self.menu.addAction(self.http2_action)
         self.menu.addAction(self.http3_action)
@@ -1128,8 +1107,8 @@ class AsenaTray:
 
     def _retranslate_menu(self):
         """Menuyu yeniden kurmadan tum etiketleri yeni dile cevir (acik menu korunur).
-        HTTP/2·HTTP/3 ve dillerin kendi adlari cevrilmez -> dokunulmaz."""
-        self.disconnect_action.setText(t("disconnect"))
+        HTTP/2·HTTP/3 ve dillerin kendi adlari cevrilmez -> dokunulmaz.
+        toggle_action metni refresh'te (duruma gore Baglan/Kes) ayarlanir."""
         self.bypass_menu.setTitle(t("force_asena"))
         self.blacklist_menu.setTitle(t("blacklist_menu"))
         self.language_menu.setTitle(t("language"))
@@ -1141,10 +1120,14 @@ class AsenaTray:
 
     def _on_click(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            if current_mode() is None:
-                self.set_mode("http2")
-            else:
-                self.disconnect()
+            self.toggle()
+
+    def toggle(self):
+        # Kapaliyken varsayilan http2 ile baglan; bagliyken kes. (Sol tik + toggle tusu.)
+        if current_mode() is None:
+            self.set_mode("http2")
+        else:
+            self.disconnect()
 
     def disconnect(self):
         subprocess.Popen(ASENA_OFF, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1397,7 +1380,8 @@ class AsenaTray:
             self.tray.setIcon(self.icon_off)
             self.tray.setToolTip(t("tip_disconnected", app="Asena"))
 
-        self.disconnect_action.setEnabled(active)
+        # Tek toggle: bagliyken "Baglantiyi kes", kapaliyken "Baglan" (hep aktif -> olu oge yok)
+        self.toggle_action.setText(t("disconnect") if active else t("connect"))
         self.http2_action.setChecked(mode == "http2")
         self.http3_action.setChecked(mode == "http3")
 
