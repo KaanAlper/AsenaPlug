@@ -38,6 +38,19 @@ if (-not $tun) {
     exit 0
 }
 
+# Defansif: full modda HER ŞEY zaten tünelli -> blacklist etkisiz. Selective makinesini
+# (dnsproxy/NRPT/route-sync) çalıştırma (tray de engelliyor; script kendini korusun).
+$StateFile = Join-Path $RunDir "state.json"
+if (Test-Path $StateFile) {
+    try {
+        $st = Get-Content $StateFile -Raw | ConvertFrom-Json
+        if ($st -and "$($st.scope)" -eq "full") {
+            Write-Log "full mod — blacklist etkisiz, atlandı."
+            exit 0
+        }
+    } catch {}
+}
+
 Clear-DnsClientCache -ErrorAction SilentlyContinue
 Stop-ScheduledTask -TaskName "AsenaPlug_RouteSync" -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300

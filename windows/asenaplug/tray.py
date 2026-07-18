@@ -12,7 +12,7 @@ import sys
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QLocale, QObject, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QFileSystemWatcher, QLocale, QObject, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QSystemTrayIcon
 
@@ -234,6 +234,18 @@ class AsenaTray:
         self.timer.timeout.connect(self.refresh)
         self.timer.start(3000)
 
+        # Blacklist dosya-izleme: KALICI DEĞİL — sadece "Düzenle" sonrası editörle
+        # yapılan değişiklikleri geçici dinler (aktif düzenleme boyunca; sessizlikten
+        # sonra kendini kapatır -> sistemi yormaz). "Ekle" tuşu ise DOĞRUDAN yeniler.
+        self._bl_watcher = None
+        self._dns_reload_proc = None   # çalışan dns-reload (üst üste binmeyi önle)
+        self._bl_reload_timer = QTimer()          # debounce: hızlı kayıtları birleştir
+        self._bl_reload_timer.setSingleShot(True)
+        self._bl_reload_timer.timeout.connect(self._do_blacklist_reload)
+        self._bl_watch_stop_timer = QTimer()      # sessizlikten sonra dinlemeyi bırak
+        self._bl_watch_stop_timer.setSingleShot(True)
+        self._bl_watch_stop_timer.timeout.connect(self._stop_blacklist_watch)
+
         self.app.aboutToQuit.connect(self.emergency_cleanup)
 
         # Açılışta sessiz güncelleme denetimi (sadece kurulu exe; günde 1 kez)
@@ -359,7 +371,8 @@ class AsenaTray:
         self.blacklist_menu.addSeparator()
         self.blacklist_menu.addAction(t("bl_edit")).triggered.connect(self.open_blacklist)
         self.blacklist_menu.addAction(t("bl_add")).triggered.connect(self.prompt_add_domain)
-        self.blacklist_menu.addAction(t("bl_reload")).triggered.connect(self.reload_dns)
+        # "DNS yenile" tuşu KALDIRILDI: ekleme doğrudan yeniler, düzenleme dosya-izleyiciyle
+        # otomatik yenilenir (kullanıcı kapat/aç yapmasın).
 
     # ------------------------------------------------------------------ events
     def toggle(self):
@@ -528,7 +541,7 @@ class AsenaTray:
     # yerine; çakışma/thrashing yok, en son hedef kazanır, kendini iyileştirir.
     def set_target(self, transport: str, scope: str):
         """Modu UYGULA (bağlan/değiştir). İşlem sürerken yok sayılır (tek anda tek iş)."""
-        if self._busy():
+        if self._busy():   # dns-reload dahil (_busy) -> dns-reload sürerken op başlamaz (yarış YOK)
             return
         state.write_desired(transport, scope, connected=True)   # niyet: BAĞLI (oto-reconnect)
         self._warn_dpi_conflict()                               # GoodbyeDPI vs açıksa uyar
@@ -547,7 +560,7 @@ class AsenaTray:
         threading.Thread(target=check, daemon=True).start()
 
     def disconnect(self):
-        if self._busy():
+        if self._busy():   # dns-reload dahil -> dns-reload sürerken kes başlamaz (asena-off yarışı YOK)
             return
         state.write_desired(self._sel_transport, self._sel_scope, connected=False)  # niyet: KESİK
         self._start_op(("off",))
@@ -565,7 +578,11 @@ class AsenaTray:
     def _busy(self) -> bool:
         if self._op is not None:
             return True
-        return self._script_proc is not None and self._script_proc.poll() is None
+        if self._script_proc is not None and self._script_proc.poll() is None:
+            return True
+        # dns-reload de MEŞGUL sayılır -> sürerken op/watchdog/net-watch başlamaz + menü
+        # kilitli ("Değiştir"deki gibi) -> asena-off/on ile NRPT/dnsproxy yarışı olmaz.
+        return self._dns_reload_proc is not None and self._dns_reload_proc.poll() is None
 
     def _start_op(self, op):
         """op: ('on',transport,scope) | ('off',). Register gerekiyorsa önce onu halleder."""
@@ -612,6 +629,19 @@ class AsenaTray:
         tünel kurmasını engeller."""
         p = self._script_proc
         self._script_proc = None
+        if p is not None and p.poll() is None:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+
+    def _terminate_dns_reload(self):
+        """Çalışan arka-plan dns-reload'ı (asena-dns-reload.ps1) durdur. Bir op (bağlan/
+        kes/değiştir) onu zaten ezeceğinden (clean-slate/teardown), önce durdurulur ki iki
+        powershell NRPT/dnsproxy/route-sync üzerinde YARIŞMASIN (aksi halde disconnect'ten
+        sonra bayat NRPT + ölü dnsproxy kalıp blacklist domainleri çözülemezdi)."""
+        p = self._dns_reload_proc
+        self._dns_reload_proc = None
         if p is not None and p.poll() is None:
             try:
                 p.terminate()
@@ -665,11 +695,15 @@ class AsenaTray:
         if self._script_proc.poll() is None:      # süreç HÂLÂ çalışıyor
             self._op_ticks += 1
             if self._op_ticks > 90:               # ~45s -> vazgeç
-                self._terminate_proc()            # orphan asena-on'u ÖLDÜR (single-flight korunsun)
-                self._op = None
+                self._terminate_proc()            # asılı asena-on POWERSHELL'ini öldür
                 tail = _log_tail()
                 win.notify(APP_NAME, t("notify_timeout") + (f"\n{tail}" if tail else ""))
-                self.refresh()
+                # asena-on usque'yu AYRIK (Start-Process) başlatır -> powershell ölse de usque
+                # + yarım DNS/route/pin/firewall AYAKTA kalır (state.json yazılmadı -> tray
+                # 'disconnected' görür ama orphan tünel var). Düzgün teardown OP'u başlat
+                # (asena-off usque'yu adıyla öldürür + artıkları geri alır); single-flight
+                # korunur -> sonraki 'Bağlan' bu bitene dek bekler, yeni yarış YOK.
+                self._start_op(("off",))
                 return
             QTimer.singleShot(500, self._poll_op)
             return
@@ -691,29 +725,82 @@ class AsenaTray:
         BLACKLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
         BLACKLIST_PATH.touch(exist_ok=True)
         os.startfile(str(BLACKLIST_PATH))
+        self._start_blacklist_watch()   # editörle düzenlerken değişimi geçici dinle
 
     def prompt_add_domain(self):
         domain, ok = QInputDialog.getText(None, t("dlg_add_title"), t("dlg_add_label"))
         if not ok:
             return
         title = t("notify_title_blacklist")
-        if state.add_domain(domain):
-            # Bağlıysa 'DNS yenile ile aktif et'; kapalıysa bağlanınca zaten alınır
-            key = "notify_added" if state.current_state() is not None else "notify_added_offline"
-            win.notify(title, t(key, domain=domain.strip()))
-        else:
+        if not state.add_domain(domain):
             win.notify(title, t("notify_not_added"))
-        self.rebuild_blacklist_menu()
-
-    def reload_dns(self):
-        title = f"{APP_NAME} {t('notify_title_blacklist')}"
-        if state.current_state() is None:
-            # Kapalıyken yenilemeye GEREK YOK — connect (asena-on) zaten blacklist'i
-            # okuyup NRPT + warm-up ile hepsini alır. Sadece bilgilendir.
-            win.notify(title, t("notify_apply_on_connect"))
             return
-        win.run_script("asena-dns-reload.ps1")
-        win.notify(title, t("notify_dns_reloading"))
+        d = domain.strip()
+        # Kapalıysa bağlanınca alınır; açıksa DOĞRUDAN sıcak yenile (kapat/aç YOK).
+        key = "notify_added" if state.current_state() is not None else "notify_added_offline"
+        win.notify(title, t(key, domain=d))
+        self._do_blacklist_reload()     # bağlı+selective ise yeniler; değilse menü sayacı + no-op
+
+    # --- Sıcak yenileme (kapat/aç gerekmez) ---
+    def _do_blacklist_reload(self):
+        """Blacklist değişti -> tüneli koparmadan SICAK yenile. Bağlı+selective değilse
+        sessiz (kapalı: bağlanınca alınır; full: her şey zaten tünelli). Çalışan bir
+        dns-reload varsa atla (üst üste binmesin) veya bir op sürüyorsa bekle."""
+        self.rebuild_blacklist_menu()           # menü sayacı her durumda tazelensin
+        cur = state.current_state()
+        if cur is None or cur["scope"] == "full":
+            return                              # kapalı/full -> yenilemeye gerek yok (retry gereksiz)
+        # Bir op (connect/switch/off) VEYA önceki dns-reload sürüyorsa (ikisi de _busy):
+        # çakışmasın diye bekle, bitince TEKRAR dene. (Op sırasında eklenen domain
+        # uygulanmadan kalmasın.) cur selective+bağlı kaldıkça op bitince başarır -> sonsuz döngü yok.
+        if self._busy():
+            self._bl_reload_timer.start(1000)
+            return
+        self._dns_reload_proc = win.run_script("asena-dns-reload.ps1")
+        win.notify(f"{APP_NAME} {t('notify_title_blacklist')}", t("notify_dns_reloading"))
+        self.refresh()                          # menüyü HEMEN kilitle ("Değiştir" gibi)
+        QTimer.singleShot(500, self._poll_dns_reload)
+
+    def _poll_dns_reload(self):
+        """dns-reload sürecini izle; bitince menüyü aç (refresh). _busy() zaten poll()
+        ile serbest kalır, bu sadece UI'yi ~3s timer'ı beklemeden anında güncellesin."""
+        if self._dns_reload_proc is None:
+            return
+        if self._dns_reload_proc.poll() is None:
+            QTimer.singleShot(500, self._poll_dns_reload)
+            return
+        self._dns_reload_proc = None            # bitti -> serbest + menü kilidini aç
+        self.refresh()
+
+    # --- Geçici dosya-izleme (SADECE 'Düzenle' sonrası; kalıcı değil) ---
+    def _start_blacklist_watch(self):
+        if self._bl_watcher is None:
+            self._bl_watcher = QFileSystemWatcher()
+            self._bl_watcher.fileChanged.connect(self._on_blacklist_changed)
+            self._bl_watcher.directoryChanged.connect(self._on_blacklist_dir_changed)
+        if BLACKLIST_PATH.exists() and str(BLACKLIST_PATH) not in self._bl_watcher.files():
+            self._bl_watcher.addPath(str(BLACKLIST_PATH))
+        if str(BLACKLIST_PATH.parent) not in self._bl_watcher.directories():
+            self._bl_watcher.addPath(str(BLACKLIST_PATH.parent))
+        self._bl_watch_stop_timer.start(120000)   # ~2 dk sessizlikten sonra dinlemeyi bırak
+
+    def _on_blacklist_changed(self, _path):
+        self._bl_reload_timer.start(800)          # debounce (çok kayıt -> tek yenileme)
+        self._bl_watch_stop_timer.start(120000)   # aktif düzenleme -> pencereyi uzat
+
+    def _on_blacklist_dir_changed(self, _dir):
+        # Editör atomik-kaydettiyse (sil+yarat) dosya izlemesi düşer -> geri ekle
+        p = str(BLACKLIST_PATH)
+        if BLACKLIST_PATH.exists() and p not in self._bl_watcher.files():
+            self._bl_watcher.addPath(p)
+            self._bl_reload_timer.start(800)
+            self._bl_watch_stop_timer.start(120000)
+
+    def _stop_blacklist_watch(self):
+        if self._bl_watcher is not None:
+            paths = self._bl_watcher.files() + self._bl_watcher.directories()
+            if paths:
+                self._bl_watcher.removePaths(paths)
 
     # ------------------------------------------------------------------ poll
     def refresh(self):
@@ -876,11 +963,16 @@ class AsenaTray:
         yeni tray onu devralır (kesintisiz güncelleme + copy-lock yarışı yok)."""
         if self._updating:
             return
-        # Bağlanma ortasında (asena-on uçuşta) çıkılırsa: süreci ÖLDÜR ki arka planda
-        # devam edip YÖNETİLMEYEN bir tünel kurmasın. Sonra state varsa düzgün teardown.
-        if self._op is not None and self._op[0] == "on":
-            self._terminate_proc()
-        if state.current_state() is None:
+        # Uçuşta bir asena-on olabilir: OP (bağlan/değiştir) VEYA net-watch re-pin (_op=None
+        # ama _script_proc dolu) — İKİSİNİ de koşulsuz durdur ki arka planda asena-off ile
+        # yarışmasın / yönetilmeyen tünel bırakmasın. dns-reload'ı da durdur.
+        had_inflight = self._op is not None or (
+            self._script_proc is not None and self._script_proc.poll() is None)
+        self._terminate_proc()
+        self._terminate_dns_reload()
+        # state varsa DÜZGÜN teardown; YA DA bağlanma/değiştirme ortasında çıkıldıysa (ayrık
+        # usque + yarım DNS/route kalmış olabilir, state.json yok) -> yine asena-off ile temizle.
+        if state.current_state() is None and not had_inflight:
             return
         try:
             win.run_script("asena-off.ps1", wait=True, timeout=20)

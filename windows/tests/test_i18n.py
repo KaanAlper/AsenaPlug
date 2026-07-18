@@ -47,7 +47,7 @@ def test_missing_key_returns_key():
 
 def test_format_params_substituted():
     i18n.set_language("en")
-    assert t("notify_added", domain="x.com") == "x.com added. Use 'Reload DNS' to activate."
+    assert t("notify_added", domain="x.com") == "x.com added to the blacklist."
     assert "{" not in t("status_connected", detail="HTTP/2 · Everything")
 
 
