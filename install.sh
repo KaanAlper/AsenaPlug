@@ -43,12 +43,21 @@ fi
 say "Distro: $PRETTY  [$DISTRO ailesi]  ($(uname -m))"
 
 if [ "$(id -u)" -ne 0 ]; then
-    say "Re-launching under sudo for system installs…"
-    exec sudo -E "$0" "$@"
+    # './install.sh' gibi DOSYADAN çalıştırıldıysa sudo ile kendini yeniden başlat.
+    # 'curl | bash' (pipe) durumunda $0 dosya DEĞİL -> re-exec kırılır (root bash pipe'ın
+    # KALANINI okur, tanımsız); bu durumda kullanıcıyı 'curl | sudo bash'e yönlendir.
+    if [ -f "$0" ]; then
+        say "Re-launching under sudo for system installs…"
+        exec sudo -E "$0" "$@"
+    else
+        die "Root gerekli. Şöyle çalıştır:  curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.sh | sudo bash"
+    fi
 fi
 
 HAVE_YAY=0
-if [ "$DISTRO" = arch ] && sudo -u "$TARGET_USER" command -v yay >/dev/null 2>&1; then
+# NOT: 'sudo -u user command -v yay' ÇALIŞMAZ ('command' builtin, exec edilemez) ->
+# bir login-shell içinde çağır ki builtin çözülsün.
+if [ "$DISTRO" = arch ] && sudo -u "$TARGET_USER" bash -lc 'command -v yay' >/dev/null 2>&1; then
     HAVE_YAY=1
 fi
 
@@ -70,9 +79,20 @@ case "$DISTRO" in
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null 2>&1 || warn "apt-get update başarısız (devam)."
     # notify-send=libnotify-bin; systemd zaten var. unzip/curl usque binary'si için.
+    # python3-pip: PySide6 apt paketi yoksa pip fallback'i çalışabilsin.
     apt-get install -y -qq \
-        libnotify-bin sudo iproute2 dnsmasq nftables unzip curl ca-certificates >/dev/null 2>&1 \
+        libnotify-bin sudo iproute2 dnsmasq nftables unzip curl ca-certificates python3-pip >/dev/null 2>&1 \
         || warn "Bazı paketler kurulamadı (devam ediliyor)."
+    # Debian, dnsmasq paketini kurunca sistem 'dnsmasq.service'ini OTOMATİK başlatır ve
+    # 0.0.0.0:53'e bağlanır -> asena dnsmasq'ımızın 127.0.0.2:53 bind'i EADDRINUSE ile
+    # fail eder (asena-on abort). Sistem instance'ını durdur/devre dışı bırak; kendi
+    # instance'ımızı asena-on elle başlatır. (Ubuntu: systemd-resolved 127.0.0.53'te — çakışmaz.)
+    systemctl disable --now dnsmasq >/dev/null 2>&1 || true
+    # systemd-resolved: selective-DNS mekanizması (asena-on 'resolvectl') buna dayanır.
+    # Ubuntu'da varsayılan aktif; Debian 12+'da AYRI paket. Ayrı apt çağrısı — yoksa
+    # çekirdek paketleri bloklamasın. Best-effort: yoksa selective-DNS devre dışı kalır.
+    apt-get install -y -qq systemd-resolved >/dev/null 2>&1 || true
+    systemctl enable --now systemd-resolved >/dev/null 2>&1 || true
     # PySide6: apt (python3-pyside6, Debian 12+/Ubuntu 22.04+); yoksa pip (PEP 668).
     if ! sudo -u "$TARGET_USER" python3 -c 'import PySide6' 2>/dev/null; then
         apt-get install -y -qq python3-pyside6 >/dev/null 2>&1 \
@@ -203,9 +223,13 @@ ip rule add fwmark "$ASENA_MARK" table "$ASENA_TABLE" priority 100
 
 # rp_filter: asimetrik routing icin gevsetilir. Mevcut deger saklanir, asena-off geri yukler.
 mkdir -p "$RUN_DIR" 2>/dev/null || true
-sysctl -n net.ipv4.conf.all.rp_filter > "$RUN_DIR/rpfilter.all" 2>/dev/null || true
-sysctl -n "net.ipv4.conf.${DEV}.rp_filter" > "$RUN_DIR/rpfilter.dev" 2>/dev/null || true
-printf '%s\n' "$DEV" > "$RUN_DIR/rpfilter.devname" 2>/dev/null || true
+# SADECE henuz saklanmadiysa kaydet: asena-off'suz cift asena-on'da orijinali '2' ile
+# ezip asena-off'un yanlis (2) deger geri yuklemesini onle (idempotent snapshot).
+if [ ! -f "$RUN_DIR/rpfilter.all" ]; then
+    sysctl -n net.ipv4.conf.all.rp_filter > "$RUN_DIR/rpfilter.all" 2>/dev/null || true
+    sysctl -n "net.ipv4.conf.${DEV}.rp_filter" > "$RUN_DIR/rpfilter.dev" 2>/dev/null || true
+    printf '%s\n' "$DEV" > "$RUN_DIR/rpfilter.devname" 2>/dev/null || true
+fi
 sysctl -wq net.ipv4.conf.all.rp_filter=2
 sysctl -wq "net.ipv4.conf.${DEV}.rp_filter=2" 2>/dev/null || true
 
@@ -278,13 +302,19 @@ fi
 
 # dnsmasq: config uret ve baslat.
 pkill -f "dnsmasq.*asena" 2>/dev/null || true
+sleep 0.3                                  # onceki instance 127.0.0.2:53'u biraksin (bind yarisi)
 /usr/local/bin/asena-dnsmasq-gen
 dnsmasq -C /etc/dnsmasq-asena.conf --pid-file=/run/dnsmasq-asena.pid
 
-# Resolved'i dnsmasq'a yonlendir.
-resolvectl dns "$DEV" 127.0.0.2
-resolvectl domain "$DEV" "~."
-resolvectl default-route "$DEV" true
+# Resolved'i dnsmasq'a yonlendir. systemd-resolved GEREKIR; yoksa selective-DNS calismaz
+# ama tunel + app/iface routing ayakta kalir -> 'set -e' altinda ABORT ETME (guard'li).
+if command -v resolvectl >/dev/null 2>&1; then
+    resolvectl dns "$DEV" 127.0.0.2 || true
+    resolvectl domain "$DEV" "~." || true
+    resolvectl default-route "$DEV" true || true
+else
+    echo "UYARI: resolvectl yok (systemd-resolved gerekli) -> selective DNS atlandi." >&2
+fi
 
 echo "Asena on ($MODE) gw=$GW dev=$DEV user=$USER_NAME asena_iface=$IFACE_COUNT slice=${SLICE_REL_PATH:-?}"
 EOF

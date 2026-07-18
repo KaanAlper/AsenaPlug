@@ -107,7 +107,7 @@ One `install.sh` auto‑detects your package manager and installs accordingly:
 #### Install
 ```bash
 # one‑liner (auto‑detects Arch vs Debian)
-curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.sh | sudo bash
 # or from a clone
 git clone https://github.com/KaanAlper/AsenaPlug.git && cd AsenaPlug && ./install.sh
 ```
@@ -275,7 +275,7 @@ yolu yeni (sorun görürsen bildir).
 #### Kurulum
 ```bash
 # tek satır (Arch mı Debian mı otomatik algılar)
-curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.sh | sudo bash
 # ya da klondan
 git clone https://github.com/KaanAlper/AsenaPlug.git && cd AsenaPlug && ./install.sh
 ```
