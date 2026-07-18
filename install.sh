@@ -1077,7 +1077,7 @@ class AsenaTray:
 
         self._build_menu()
 
-        self._last_mode: str | None = None
+        self._last_state = None   # (mode, scope) — bildirim tetigi icin
         self._initialized = False
         self._rebuild_menus()
         self.refresh()
@@ -1490,15 +1490,19 @@ class AsenaTray:
                     if exe and any(exe_matches(exe, pat) for pat in wanted_exes):
                         add_pid_to_slice(pid)
 
-        if self._initialized and mode != self._last_mode:
+        # Bildirim moda+scope gosterir (ör. "Baglandi (HTTP/2 · Her sey)"); scope degisince
+        # de tetiklensin diye (mode, scope) izlenir. cur_scope yukarida hesaplandi.
+        state_now = (mode, cur_scope)
+        if self._initialized and state_now != self._last_state:
             if mode is None:
                 body = t("notify_disconnected")
                 icon = "network-offline"
             else:
-                body = t("notify_connected", detail=mode.upper().replace("HTTP", "HTTP/"))
+                tlabel = mode.upper().replace("HTTP", "HTTP/")
+                body = t("notify_connected", detail=f"{tlabel} · {t('scope_' + cur_scope)}")
                 icon = "network-vpn"
             notify("Asena", body, icon)
-        self._last_mode = mode
+        self._last_state = state_now
         self._initialized = True
 
     def run(self):
