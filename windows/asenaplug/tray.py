@@ -211,6 +211,7 @@ class AsenaTray:
         self._op_switch = False  # süren "on" işlemi GEÇİŞ mi (bağlıyken) yoksa ilk BAĞLANMA mı
         self._op_ticks = 0       # işlem timeout sayacı (500ms/tik, ~45s)
         self._script_proc = None      # çalışan asena-on/off süreci (single-flight)
+        self._dns_reload_proc = None  # çalışan dns-reload (ERKEN init: refresh->_busy okur)
         self._register_thread = None  # connect öncesi cihaz kaydı (arka plan)
         self._autostart_enabled = True  # gerçek durum açılışta asenkron okunur (_refresh_autostart)
         self._updating = False        # güncelleme için çıkışta teardown'ı atla (tünel açık kalsın)
@@ -238,7 +239,6 @@ class AsenaTray:
         # yapılan değişiklikleri geçici dinler (aktif düzenleme boyunca; sessizlikten
         # sonra kendini kapatır -> sistemi yormaz). "Ekle" tuşu ise DOĞRUDAN yeniler.
         self._bl_watcher = None
-        self._dns_reload_proc = None   # çalışan dns-reload (üst üste binmeyi önle)
         self._bl_reload_timer = QTimer()          # debounce: hızlı kayıtları birleştir
         self._bl_reload_timer.setSingleShot(True)
         self._bl_reload_timer.timeout.connect(self._do_blacklist_reload)
