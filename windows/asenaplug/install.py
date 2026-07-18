@@ -11,7 +11,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import win
 from .paths import (
     INSTALL_DIR, SCRIPTS_DIR, USQUE_EXE, WINTUN_DLL, DNSPROXY_EXE, KILLSWITCH_EXE,
     DATA_DIR, CONFIG_DIR, RUN_DIR, CONFIG_JSON, BLACKLIST_PATH, SETUP_FLAG, LOG_FILE,
