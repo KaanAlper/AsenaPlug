@@ -160,19 +160,26 @@ fi
 say "Writing /usr/local/bin/asena-on…"
 cat > /usr/local/bin/asena-on << 'EOF'
 #!/usr/bin/env bash
-# Asena nativetun start — physical is default, only listed apps/ifaces/domains go through Asena.
-# Usage: asena-on [http2|http3]   (default: http2)
+# Asena nativetun start. SCOPE=selective: physical default, sadece liste/app/domain Asena'a.
+#                          SCOPE=full:      TUM trafik Asena'a (split-default), endpoint pinli.
+# Usage: asena-on [http2|http3] [selective|full]   (default: http2 selective)
 # Runs as root via sudoers NOPASSWD.
 set -e
 
 MODE="${1:-http2}"
+SCOPE="${2:-selective}"
 case "$MODE" in
     http2) PROTO_FLAGS="--http2" ;;
     http3) PROTO_FLAGS="" ;;
-    *) echo "Usage: asena-on [http2|http3]" >&2; exit 2 ;;
+    *) echo "Usage: asena-on [http2|http3] [selective|full]" >&2; exit 2 ;;
+esac
+case "$SCOPE" in
+    selective|full) ;;
+    *) echo "Usage: asena-on [http2|http3] [selective|full]" >&2; exit 2 ;;
 esac
 
 MASQUE_IP="162.159.198.2"
+CF_RANGE="162.159.192.0/19"   # MASQUE/WARP endpoint infra — full modda fiziksel'de pinli (loop yok)
 ASENA_TABLE=201
 ASENA_MARK=0x43
 SLICE_NAME="asena-only.slice"
@@ -212,8 +219,11 @@ if ! pgrep -x usque >/dev/null; then
     done
 fi
 
-# MASQUE endpoint dogrudan physical uzerinden cikmali.
+# MASQUE endpoint dogrudan physical uzerinden cikmali (loop onler).
 ip route replace "${MASQUE_IP}/32" via "$GW" dev "$DEV"
+# Full modda endpoint /19 araligini da pinle (endpoint degisebilir; split-default'tan
+# daha SPESIFIK -> usque'nin kendi baglantisi tunele girip loop yapmaz).
+[ "$SCOPE" = full ] && ip route replace "$CF_RANGE" via "$GW" dev "$DEV"
 
 # Physical default route korunuyor — tun0 default yapilmiyor.
 ip route flush table "$ASENA_TABLE" 2>/dev/null || true
@@ -300,6 +310,16 @@ if [ -f "$ROUTE_CONF" ]; then
     done < "$ROUTE_CONF"
 fi
 
+# --- FULL scope: TUM trafik tun0'a (split-default 0.0.0.0/1 + 128.0.0.0/1). LAN /24 ve
+#     endpoint /19 daha SPESIFIK oldugu icin FIZIKSEL kalir (LAN bozulmaz, usque loop
+#     yapmaz). IPv6 GLOBAL bloklu (tun0 v4-only -> app'lar v4'e = tunele duser, leak yok).
+#     (Selective marking/nftset full'de gereksiz ama zararsiz kalir.) ---
+if [ "$SCOPE" = full ]; then
+    ip route replace 0.0.0.0/1 dev tun0
+    ip route replace 128.0.0.0/1 dev tun0
+    nft add rule inet asena_route output6 meta nfproto ipv6 ip6 daddr 2000::/3 counter reject with icmpv6 type admin-prohibited
+fi
+
 # dnsmasq: config uret ve baslat.
 pkill -f "dnsmasq.*asena" 2>/dev/null || true
 sleep 0.3                                  # onceki instance 127.0.0.2:53'u biraksin (bind yarisi)
@@ -316,7 +336,8 @@ else
     echo "UYARI: resolvectl yok (systemd-resolved gerekli) -> selective DNS atlandi." >&2
 fi
 
-echo "Asena on ($MODE) gw=$GW dev=$DEV user=$USER_NAME asena_iface=$IFACE_COUNT slice=${SLICE_REL_PATH:-?}"
+printf '%s\n' "$SCOPE" > "$RUN_DIR/scope" 2>/dev/null || true   # tray current_scope() bunu okur
+echo "Asena on ($MODE/$SCOPE) gw=$GW dev=$DEV user=$USER_NAME asena_iface=$IFACE_COUNT slice=${SLICE_REL_PATH:-?}"
 EOF
 chmod 755 /usr/local/bin/asena-on
 
@@ -346,6 +367,12 @@ pkill -f "dnsmasq.*dnsmasq-asena" 2>/dev/null || true
 ip route del "${MASQUE_IP}/32" 2>/dev/null || true
 ip rule del fwmark "$ASENA_MARK" 2>/dev/null || true
 ip route flush table "$ASENA_TABLE" 2>/dev/null || true
+# Full mod artiklari: split-default /1 + endpoint /19 pin + scope dosyasi (tun0 silinince
+# /1'ler zaten ucar; yine de acikca kaldir). v6 global blok nft table ile birlikte gider.
+ip route del 0.0.0.0/1 dev tun0 2>/dev/null || true
+ip route del 128.0.0.0/1 dev tun0 2>/dev/null || true
+ip route del 162.159.192.0/19 2>/dev/null || true
+rm -f "$RUN_DIR/scope" 2>/dev/null || true
 
 nft delete table inet asena_route 2>/dev/null || true
 nft delete table ip asena_nat 2>/dev/null || true
@@ -556,8 +583,8 @@ LANGUAGES = [
 ]
 TRANSLATIONS = {
     "en": {
-        "disconnect": "Disconnect", "force_asena": "Force through Asena",
-        "blacklist_menu": "Blacklist", "language": "Language", "quit": "Quit",
+        "connect": "Connect", "disconnect": "Disconnect", "force_asena": "Force through Asena",
+        "blacklist_menu": "Blacklist", "language": "Language", "quit": "Quit", "scope_selective": "Blacklist only", "scope_full": "Everything", "apply_btn": "Apply → {detail}", "switching_btn": "Switching…",
         "bypass_through": "Through Asena:",
         "bypass_iface_item": "  ✓ {name}  (iface)",
         "bypass_app_item": "  ✓ {short}  (app: {exe})",
@@ -585,8 +612,8 @@ TRANSLATIONS = {
         "notify_connected": "Connected ({detail})", "notify_disconnected": "Disconnected",
     },
     "de": {
-        "disconnect": "Trennen", "force_asena": "Über Asena erzwingen",
-        "blacklist_menu": "Blacklist", "language": "Sprache", "quit": "Beenden",
+        "connect": "Verbinden", "disconnect": "Trennen", "force_asena": "Über Asena erzwingen",
+        "blacklist_menu": "Blacklist", "language": "Sprache", "quit": "Beenden", "scope_selective": "Nur Blacklist", "scope_full": "Alles", "apply_btn": "Übernehmen → {detail}", "switching_btn": "Wird umgeschaltet…",
         "bypass_through": "Über Asena:",
         "bypass_iface_item": "  ✓ {name}  (iface)",
         "bypass_app_item": "  ✓ {short}  (app: {exe})",
@@ -615,8 +642,8 @@ TRANSLATIONS = {
         "notify_connected": "Verbunden ({detail})", "notify_disconnected": "Getrennt",
     },
     "es": {
-        "disconnect": "Desconectar", "force_asena": "Forzar por Asena",
-        "blacklist_menu": "Lista negra", "language": "Idioma", "quit": "Salir",
+        "connect": "Conectar", "disconnect": "Desconectar", "force_asena": "Forzar por Asena",
+        "blacklist_menu": "Lista negra", "language": "Idioma", "quit": "Salir", "scope_selective": "Solo lista negra", "scope_full": "Todo", "apply_btn": "Aplicar → {detail}", "switching_btn": "Cambiando…",
         "bypass_through": "Por Asena:",
         "bypass_iface_item": "  ✓ {name}  (iface)",
         "bypass_app_item": "  ✓ {short}  (app: {exe})",
@@ -644,8 +671,8 @@ TRANSLATIONS = {
         "notify_connected": "Conectado ({detail})", "notify_disconnected": "Desconectado",
     },
     "fr": {
-        "disconnect": "Se déconnecter", "force_asena": "Forcer via Asena",
-        "blacklist_menu": "Liste noire", "language": "Langue", "quit": "Quitter",
+        "connect": "Se connecter", "disconnect": "Se déconnecter", "force_asena": "Forcer via Asena",
+        "blacklist_menu": "Liste noire", "language": "Langue", "quit": "Quitter", "scope_selective": "Liste noire seule", "scope_full": "Tout", "apply_btn": "Appliquer → {detail}", "switching_btn": "Changement…",
         "bypass_through": "Via Asena :",
         "bypass_iface_item": "  ✓ {name}  (iface)",
         "bypass_app_item": "  ✓ {short}  (app: {exe})",
@@ -673,8 +700,8 @@ TRANSLATIONS = {
         "notify_connected": "Connecté ({detail})", "notify_disconnected": "Déconnecté",
     },
     "tr": {
-        "disconnect": "Bağlantıyı kes", "force_asena": "Asena'a zorla",
-        "blacklist_menu": "Blacklist", "language": "Dil", "quit": "Çıkış",
+        "connect": "Bağlan", "disconnect": "Bağlantıyı kes", "force_asena": "Asena'a zorla",
+        "blacklist_menu": "Blacklist", "language": "Dil", "quit": "Çıkış", "scope_selective": "Sadece blacklist", "scope_full": "Her şey", "apply_btn": "Değiştir → {detail}", "switching_btn": "Değiştiriliyor…",
         "bypass_through": "Asena'tan geçen:",
         "bypass_iface_item": "  ✓ {name}  (iface)",
         "bypass_app_item": "  ✓ {short}  (app: {exe})",
@@ -753,8 +780,8 @@ def t(key, **kw):
     return s
 
 
-def asena_on_cmd(mode: str) -> list[str]:
-    return ["sudo", "-n", "/usr/local/bin/asena-on", mode]
+def asena_on_cmd(mode: str, scope: str = "selective") -> list[str]:
+    return ["sudo", "-n", "/usr/local/bin/asena-on", mode, scope]
 
 
 ICON_SIZE = 64
@@ -780,6 +807,15 @@ def current_mode() -> str | None:
         if "nativetun" in line:
             return "http2" if "--http2" in line else "http3"
     return None
+
+
+def current_scope() -> str:
+    """Aktif scope: /run/asena/scope (asena-on yazar). Yoksa 'selective'."""
+    try:
+        s = open("/run/asena/scope", encoding="utf-8").read().strip()
+        return s if s in ("selective", "full") else "selective"
+    except OSError:
+        return "selective"
 
 
 # ---------------------------------------------------------------- Conf parser
@@ -998,23 +1034,6 @@ class _StayMenu(QMenu):
         super().mouseReleaseEvent(e)
 
 
-# Menu eylem renk noktalari: Kes = acik kirmizi, Baglan (HTTP/2·HTTP/3) = acik yesil.
-DOT_RED = QColor(255, 107, 107)     # #ff6b6b
-DOT_GREEN = QColor(105, 219, 124)   # #69db7c
-
-
-def _dot_icon(color, size=12):
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(color)
-    p.drawEllipse(1, 1, size - 2, size - 2)
-    p.end()
-    return QIcon(pm)
-
-
 class AsenaTray:
     def __init__(self):
         global SLICE_PROCS
@@ -1037,9 +1056,6 @@ class AsenaTray:
 
         self.icon_on = make_icon(True)
         self.icon_off = make_icon(False)
-        # Menu renk noktalari (QApplication sonrasi, _build_menu ONCESI olusturulur)
-        self._dot_green = _dot_icon(DOT_GREEN)   # baglan (HTTP/2·HTTP/3)
-        self._dot_red = _dot_icon(DOT_RED)       # kes (disconnect)
 
         # Blacklist dosya-izleme: KALICI DEGIL — sadece "Duzenle" sonrasi editoru
         # dinler, sessizlikten sonra kendini kapatir. "Domain ekle" DOGRUDAN yeniler.
@@ -1054,9 +1070,14 @@ class AsenaTray:
         self.tray.setIcon(self.icon_off)
         self.tray.activated.connect(self._on_click)
 
+        # Secim durumu (Windows'taki gibi sec-sonra-Degistir): tikladikca _sel_* degisir,
+        # "Degistir" ile uygulanir. Baslangic: baglIysa aktif durum, degilse varsayilan.
+        self._sel_transport = current_mode() or "http2"
+        self._sel_scope = current_scope()
+
         self._build_menu()
 
-        self._last_mode: str | None = None
+        self._last_state = None   # (mode, scope) — bildirim tetigi icin
         self._initialized = False
         self._rebuild_menus()
         self.refresh()
@@ -1070,19 +1091,38 @@ class AsenaTray:
 
     def _build_menu(self):
         self.menu = _StayMenu()
-        self.disconnect_action = QAction(t("disconnect"))
-        self.disconnect_action.setIcon(self._dot_red)           # Kes = acik kirmizi
-        self.disconnect_action.triggered.connect(self.disconnect)
+        # Tek toggle: kapaliyken "Baglan" (http2 ile baglar), bagliyken "Baglantiyi kes"
+        # (metin refresh'te duruma gore ayarlanir -> kapaliyken olu 'Kes' ogesi olmaz).
+        self.toggle_action = QAction(t("connect"))
+        self.toggle_action.triggered.connect(self.toggle)
 
+        # Transport (HTTP/2·HTTP/3) — SADECE secim (choose_transport); "Degistir" uygular.
+        self.transport_group = QActionGroup(self.menu)
+        self.transport_group.setExclusive(True)
         self.http2_action = QAction("HTTP/2")   # teknik etiket — çevrilmez
         self.http2_action.setCheckable(True)
-        self.http2_action.setIcon(self._dot_green)              # baglan = acik yesil
-        self.http2_action.triggered.connect(lambda: self.set_mode("http2"))
-
+        self.http2_action.triggered.connect(lambda: self.choose_transport("http2"))
         self.http3_action = QAction("HTTP/3")
         self.http3_action.setCheckable(True)
-        self.http3_action.setIcon(self._dot_green)
-        self.http3_action.triggered.connect(lambda: self.set_mode("http3"))
+        self.http3_action.triggered.connect(lambda: self.choose_transport("http3"))
+        self.transport_group.addAction(self.http2_action)
+        self.transport_group.addAction(self.http3_action)
+
+        # Scope (Sadece blacklist · Her sey) — SADECE secim.
+        self.scope_group = QActionGroup(self.menu)
+        self.scope_group.setExclusive(True)
+        self.selective_action = QAction(t("scope_selective"))
+        self.selective_action.setCheckable(True)
+        self.selective_action.triggered.connect(lambda: self.choose_scope("selective"))
+        self.full_action = QAction(t("scope_full"))
+        self.full_action.setCheckable(True)
+        self.full_action.triggered.connect(lambda: self.choose_scope("full"))
+        self.scope_group.addAction(self.selective_action)
+        self.scope_group.addAction(self.full_action)
+
+        # DEGISTIR (apply): secim aktif moddan farkliysa belirir; islem surerken kapali.
+        self.apply_action = QAction("")
+        self.apply_action.triggered.connect(self._apply_selection)
 
         self.bypass_menu = _StayMenu(t("force_asena"))
         self.blacklist_menu = _StayMenu(t("blacklist_menu"))
@@ -1103,10 +1143,15 @@ class AsenaTray:
         self.quit_action = QAction(t("quit"))
         self.quit_action.triggered.connect(self.app.quit)
 
-        self.menu.addAction(self.disconnect_action)
+        self.menu.addAction(self.toggle_action)
         self.menu.addSeparator()
         self.menu.addAction(self.http2_action)
         self.menu.addAction(self.http3_action)
+        self.menu.addSeparator()
+        self.menu.addAction(self.selective_action)
+        self.menu.addAction(self.full_action)
+        self.menu.addSeparator()
+        self.menu.addAction(self.apply_action)
         self.menu.addSeparator()
         self.menu.addMenu(self.bypass_menu)
         self.menu.addMenu(self.blacklist_menu)
@@ -1128,41 +1173,54 @@ class AsenaTray:
 
     def _retranslate_menu(self):
         """Menuyu yeniden kurmadan tum etiketleri yeni dile cevir (acik menu korunur).
-        HTTP/2·HTTP/3 ve dillerin kendi adlari cevrilmez -> dokunulmaz."""
-        self.disconnect_action.setText(t("disconnect"))
+        HTTP/2·HTTP/3 ve dillerin kendi adlari cevrilmez -> dokunulmaz.
+        toggle_action metni refresh'te (duruma gore Baglan/Kes) ayarlanir."""
+        self.selective_action.setText(t("scope_selective"))
+        self.full_action.setText(t("scope_full"))
         self.bypass_menu.setTitle(t("force_asena"))
         self.blacklist_menu.setTitle(t("blacklist_menu"))
         self.language_menu.setTitle(t("language"))
         self.quit_action.setText(t("quit"))
         self._rebuild_menus()      # bypass + blacklist ogeleri yeni dille
-        self.refresh()
+        self.refresh()             # toggle/checkmark/apply
 
     # -------- Asena toggle
 
     def _on_click(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            if current_mode() is None:
-                self.set_mode("http2")
-            else:
-                self.disconnect()
+            self.toggle()
+
+    def toggle(self):
+        # Kapaliyken SECILI transport/scope ile baglan; bagliyken kes. (Sol tik + toggle tusu.)
+        if current_mode() is None:
+            self._launch(self._sel_transport, self._sel_scope)
+        else:
+            self.disconnect()
 
     def disconnect(self):
         subprocess.Popen(ASENA_OFF, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         QTimer.singleShot(1500, self.refresh)
 
-    def set_mode(self, target: str):
-        cur = current_mode()
-        if cur == target:
-            return
-        if cur is not None:
-            subprocess.run(ASENA_OFF, capture_output=True)
-            QTimer.singleShot(1500, lambda: self._launch(target))
-        else:
-            self._launch(target)
+    # -------- Sec-sonra-Degistir (Windows modeli)
+    def choose_transport(self, tr):
+        self._sel_transport = tr          # SADECE secim; "Degistir" ya da "Baglan" uygular
+        self.refresh()
 
-    def _launch(self, mode: str):
+    def choose_scope(self, sc):
+        self._sel_scope = sc
+        self.rebuild_blacklist_menu()     # full'de blacklist etkisiz notu icin
+        self.refresh()
+
+    def _apply_selection(self):
+        # BaglIyken secilen transport/scope'u uygula (off + on). Kapaliyken "Baglan" kullanilir.
+        if current_mode() is None:
+            return
+        subprocess.run(ASENA_OFF, capture_output=True)
+        QTimer.singleShot(1500, lambda: self._launch(self._sel_transport, self._sel_scope))
+
+    def _launch(self, mode: str, scope: str = "selective"):
         subprocess.Popen(
-            asena_on_cmd(mode),
+            asena_on_cmd(mode, scope),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         QTimer.singleShot(3500, self.refresh)
@@ -1397,9 +1455,25 @@ class AsenaTray:
             self.tray.setIcon(self.icon_off)
             self.tray.setToolTip(t("tip_disconnected", app="Asena"))
 
-        self.disconnect_action.setEnabled(active)
-        self.http2_action.setChecked(mode == "http2")
-        self.http3_action.setChecked(mode == "http3")
+        # Tek toggle: bagliyken "Baglantiyi kes", kapaliyken "Baglan" (hep aktif -> olu oge yok)
+        self.toggle_action.setText(t("disconnect") if active else t("connect"))
+
+        # Checkmark = SECIM (aktif mod degil): kullanici ne sectiyse o isaretli.
+        self.http2_action.setChecked(self._sel_transport == "http2")
+        self.http3_action.setChecked(self._sel_transport == "http3")
+        self.selective_action.setChecked(self._sel_scope == "selective")
+        self.full_action.setChecked(self._sel_scope == "full")
+
+        # DEGISTIR: bagliyken secim aktif moddan farkliysa "Degistir -> {mod}"; yoksa gizli.
+        # (Kapaliyken "Baglan" secili modla baglar -> apply gerekmez.)
+        cur_scope = current_scope() if active else None
+        if active and (self._sel_transport, self._sel_scope) != (mode, cur_scope):
+            tlabel = self._sel_transport.upper().replace("HTTP", "HTTP/")
+            slabel = t("scope_" + self._sel_scope)
+            self.apply_action.setText(t("apply_btn", detail=f"{tlabel} · {slabel}"))
+            self.apply_action.setVisible(True)
+        else:
+            self.apply_action.setVisible(False)
 
         if SLICE_PROCS is not None and SLICE_PROCS.exists():
             conf = read_conf()
@@ -1416,15 +1490,19 @@ class AsenaTray:
                     if exe and any(exe_matches(exe, pat) for pat in wanted_exes):
                         add_pid_to_slice(pid)
 
-        if self._initialized and mode != self._last_mode:
+        # Bildirim moda+scope gosterir (ör. "Baglandi (HTTP/2 · Her sey)"); scope degisince
+        # de tetiklensin diye (mode, scope) izlenir. cur_scope yukarida hesaplandi.
+        state_now = (mode, cur_scope)
+        if self._initialized and state_now != self._last_state:
             if mode is None:
                 body = t("notify_disconnected")
                 icon = "network-offline"
             else:
-                body = t("notify_connected", detail=mode.upper().replace("HTTP", "HTTP/"))
+                tlabel = mode.upper().replace("HTTP", "HTTP/")
+                body = t("notify_connected", detail=f"{tlabel} · {t('scope_' + cur_scope)}")
                 icon = "network-vpn"
             notify("Asena", body, icon)
-        self._last_mode = mode
+        self._last_state = state_now
         self._initialized = True
 
     def run(self):
