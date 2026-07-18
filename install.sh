@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Cloudflare MASQUE (usque) — selective routing tray for Hyprland.
+# Cloudflare MASQUE (usque) — selective routing tray for Linux.
+# Dağıtım-bağımsız: Arch ailesi (pacman) + Debian ailesi (apt-get: Ubuntu/Mint/Pop!_OS…).
 #
 # Physical internet is the default. Only apps listed in asena-route.conf and
 # domains in asena-blacklist.txt are routed through Asena.
@@ -22,9 +23,24 @@ say() { printf "\033[1;36m::\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m!!\033[0m %s\n" "$*" >&2; }
 die() { printf "\033[1;31mXX\033[0m %s\n" "$*" >&2; exit 1; }
 
-#=== Sanity ====================================================================
+#=== Sanity + dağıtım tespiti ==================================================
 say "Target user: $TARGET_USER (home: $TARGET_HOME, uid: $TARGET_UID)"
-[ -f /etc/arch-release ] || warn "Not Arch — pacman/yay paths may fail."
+# Dağıtımı paket yöneticisinden tespit et (Arch: pacman, Debian/Ubuntu: apt-get).
+# Runtime scriptleri (nftables/iproute2/dnsmasq/systemd) zaten dağıtım-bağımsız;
+# yalnız bağımlılık KURULUMU dağıtıma göre değişir.
+# Paket yöneticisinden AİLE tespiti -> türevlerin HEPSİNİ tek seferde kapsar:
+#   pacman  = Arch ailesi   (Arch, CachyOS, Manjaro, EndeavourOS, Garuda…)
+#   apt-get = Debian ailesi (Debian, Ubuntu, Linux Mint, Pop!_OS, elementary, Zorin…)
+PRETTY=$(. /etc/os-release 2>/dev/null; printf '%s' "${PRETTY_NAME:-$(uname -sr)}")
+if command -v pacman >/dev/null 2>&1; then
+    DISTRO=arch
+elif command -v apt-get >/dev/null 2>&1; then
+    DISTRO=debian
+else
+    DISTRO=unknown
+    warn "Bilinmeyen dağıtım (pacman/apt-get yok). Bağımlılıkları ELLE kur: iproute2 nftables dnsmasq libnotify(-bin) unzip curl + PySide6 + usque."
+fi
+say "Distro: $PRETTY  [$DISTRO ailesi]  ($(uname -m))"
 
 if [ "$(id -u)" -ne 0 ]; then
     say "Re-launching under sudo for system installs…"
@@ -32,31 +48,91 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 HAVE_YAY=0
-if sudo -u "$TARGET_USER" command -v yay >/dev/null 2>&1; then
+if [ "$DISTRO" = arch ] && sudo -u "$TARGET_USER" command -v yay >/dev/null 2>&1; then
     HAVE_YAY=1
 fi
 
 #=== Dependencies ==============================================================
-say "Installing system packages…"
-pacman -S --needed --noconfirm \
-    libnotify sudo iproute2 systemd dnsmasq nftables >/dev/null \
-    || warn "Bazı paketler kurulamadı (devam ediliyor)."
-# PySide6: paket adı dağıtıma göre değişir (pyside6 / python-pyside6) ve zaten
-# kuruluysa atla — biri eksik diye tüm kurulumu aborte etme.
-if ! sudo -u "$TARGET_USER" python -c 'import PySide6' 2>/dev/null; then
-    pacman -S --needed --noconfirm pyside6 >/dev/null 2>&1 \
-      || pacman -S --needed --noconfirm python-pyside6 >/dev/null 2>&1 \
-      || warn "PySide6 kurulamadı — elle: 'pacman -S pyside6' ya da 'pip install --user PySide6'."
-fi
+say "Installing system packages ($DISTRO)…"
+case "$DISTRO" in
+  arch)
+    pacman -S --needed --noconfirm \
+        libnotify sudo iproute2 systemd dnsmasq nftables unzip curl >/dev/null \
+        || warn "Bazı paketler kurulamadı (devam ediliyor)."
+    # PySide6: paket adı değişebilir (pyside6 / python-pyside6); zaten kuruluysa atla.
+    if ! sudo -u "$TARGET_USER" python -c 'import PySide6' 2>/dev/null; then
+        pacman -S --needed --noconfirm pyside6 >/dev/null 2>&1 \
+          || pacman -S --needed --noconfirm python-pyside6 >/dev/null 2>&1 \
+          || warn "PySide6 kurulamadı — elle: 'pacman -S pyside6' ya da 'pip install --user PySide6'."
+    fi
+    ;;
+  debian)
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq >/dev/null 2>&1 || warn "apt-get update başarısız (devam)."
+    # notify-send=libnotify-bin; systemd zaten var. unzip/curl usque binary'si için.
+    apt-get install -y -qq \
+        libnotify-bin sudo iproute2 dnsmasq nftables unzip curl ca-certificates >/dev/null 2>&1 \
+        || warn "Bazı paketler kurulamadı (devam ediliyor)."
+    # PySide6: apt (python3-pyside6, Debian 12+/Ubuntu 22.04+); yoksa pip (PEP 668).
+    if ! sudo -u "$TARGET_USER" python3 -c 'import PySide6' 2>/dev/null; then
+        apt-get install -y -qq python3-pyside6 >/dev/null 2>&1 \
+          || sudo -u "$TARGET_USER" pip install --user --break-system-packages PySide6 >/dev/null 2>&1 \
+          || sudo -u "$TARGET_USER" pip install --user PySide6 >/dev/null 2>&1 \
+          || warn "PySide6 kurulamadı — elle: 'apt install python3-pyside6' ya da 'pip install --user PySide6'."
+    fi
+    ;;
+  *)
+    warn "Paket kurulumu atlandı ($DISTRO) — bağımlılıklar zaten kurulu varsayılıyor."
+    ;;
+esac
+
+# usque'yu GitHub Releases'ten indir (dağıtım-bağımsız; AUR gerektirmez).
+# Asset deseni: usque_<sürüm>_linux_<arch>.zip (Diniboy1123/usque).
+install_usque_binary() {
+    local march url tmp bin
+    case "$(uname -m)" in
+        x86_64|amd64)  march=linux_amd64 ;;
+        aarch64|arm64) march=linux_arm64 ;;
+        armv7l)        march=linux_armv7 ;;
+        armv6l)        march=linux_armv6 ;;
+        *) warn "usque: bilinmeyen mimari $(uname -m). Elle kur: https://github.com/Diniboy1123/usque/releases"; return 1 ;;
+    esac
+    command -v unzip >/dev/null 2>&1 || { warn "usque için 'unzip' gerekli (kurulamadı)."; return 1; }
+    command -v curl  >/dev/null 2>&1 || { warn "usque için 'curl' gerekli (kurulamadı)."; return 1; }
+    say "Fetching usque ($march)…"
+    # ÖNCE bizim repo yedeği (usque-mirror.yml Action'ı 'usque-latest' tag'ine yansıtır),
+    # SONRA upstream (Diniboy1123) — upstream silinse/erişilemez olsa bile kurulum çalışır.
+    local api
+    for api in \
+        "https://api.github.com/repos/KaanAlper/AsenaPlug/releases/tags/usque-latest" \
+        "https://api.github.com/repos/Diniboy1123/usque/releases/latest"; do
+        url=$(curl -fsSL "$api" 2>/dev/null \
+              | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+"' | cut -d'"' -f4 \
+              | grep -E "_${march}\.zip\$" | head -1)
+        [ -n "$url" ] && { say "usque source: $api"; break; }
+    done
+    [ -z "$url" ] && { warn "usque $march asset bulunamadı (yedek + upstream)."; return 1; }
+    tmp=$(mktemp -d)
+    if curl -fsSL "$url" -o "$tmp/usque.zip" && unzip -oq "$tmp/usque.zip" -d "$tmp"; then
+        bin=$(find "$tmp" -type f -name usque | head -1)
+        [ -z "$bin" ] && bin=$(find "$tmp" -type f ! -name '*.zip' -perm -u+x | head -1)
+        [ -z "$bin" ] && bin=$(find "$tmp" -type f ! -name '*.zip' | head -1)
+        [ -n "$bin" ] && install -m 0755 "$bin" /usr/local/bin/usque
+    fi
+    rm -rf "$tmp"
+    [ -x /usr/local/bin/usque ] || command -v usque >/dev/null 2>&1
+}
 
 if ! command -v usque >/dev/null 2>&1; then
     if [ "$HAVE_YAY" -eq 1 ]; then
         say "Installing usque from AUR…"
-        sudo -u "$TARGET_USER" yay -S --needed --noconfirm usque-bin || \
-        sudo -u "$TARGET_USER" yay -S --needed --noconfirm usque || \
-            die "Could not install usque. Install manually (https://github.com/Diniboy1123/usque)"
+        sudo -u "$TARGET_USER" yay -S --needed --noconfirm usque-bin \
+          || sudo -u "$TARGET_USER" yay -S --needed --noconfirm usque \
+          || install_usque_binary \
+          || die "usque kurulamadı. Elle kur: https://github.com/Diniboy1123/usque/releases"
     else
-        die "yay not found and usque missing. Install yay (or usque manually) then re-run."
+        install_usque_binary \
+          || die "usque kurulamadı. Elle kur: https://github.com/Diniboy1123/usque/releases"
     fi
 fi
 
@@ -1485,6 +1561,7 @@ cat << EOF
     Force Asena   = specific apps/interfaces through Asena
     Blacklist     = manage domain list + reload DNS
 
-  After reboot, Hyprland starts the tray automatically.
+  After reboot, the tray starts automatically (Hyprland exec on
+  Hyprland, otherwise a standard XDG autostart entry — GNOME/KDE/…).
 ────────────────────────────────────────────────────────────────────
 EOF
