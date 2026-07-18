@@ -1,0 +1,63 @@
+name: Mirror usque releases
+
+# Diniboy1123/usque'nin en son Linux binary'lerini BİZİM repoya yedekler ('usque-latest'
+# hareketli tag'i). Upstream repo silinse / erişilemez olsa bile install.sh usque'yu
+# bizden çeker (install_usque_binary önce bu tag'e, sonra upstream'e bakar).
+#
+# ÖNEMLİ: release '--latest=false' ile oluşturulur -> repo'nun "latest release"i OLMAZ,
+# böylece Windows AsenaPlug.exe otomatik-güncellemesini (/releases/latest -> .exe arar)
+# BOZMAZ. AsenaPlug.exe release'leri (release.yml) latest kalmaya devam eder.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"      # her gün 06:00 UTC — yeni upstream release'i yakala
+  workflow_dispatch: {}        # GitHub UI'dan elle de tetiklenir
+
+permissions:
+  contents: write              # release + tag oluşturmak için
+
+concurrency:
+  group: usque-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror new upstream usque release if changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM: Diniboy1123/usque
+          MINE: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TAG=$(gh release view --repo "$UPSTREAM" --json tagName -q .tagName)
+          echo "Upstream latest: $TAG"
+
+          # Zaten bu sürümü yedeklemiş miyiz? (usque-latest release body'sinde tag saklı)
+          CUR=$(gh release view usque-latest --repo "$MINE" --json body -q .body 2>/dev/null || echo "")
+          if printf '%s' "$CUR" | grep -qF "$TAG"; then
+            echo "Zaten yedeklenmiş ($TAG) — çıkılıyor."
+            exit 0
+          fi
+
+          # Linux binary'leri (+ varsa checksum txt) indir
+          tmp=$(mktemp -d)
+          gh release download "$TAG" --repo "$UPSTREAM" --pattern '*_linux_*.zip' --dir "$tmp"
+          gh release download "$TAG" --repo "$UPSTREAM" --pattern '*.txt'         --dir "$tmp" 2>/dev/null || true
+
+          count=$(find "$tmp" -type f | wc -l)
+          echo "İndirilen dosya: $count"
+          [ "$count" -gt 0 ] || { echo "Linux asset bulunamadı — iptal."; exit 1; }
+          ls -la "$tmp"
+
+          # 'usque-latest'i taze oluştur (eski release + tag temizlenir); --latest=false
+          gh release delete usque-latest --repo "$MINE" --yes --cleanup-tag 2>/dev/null || true
+          gh release create usque-latest --repo "$MINE" \
+            --title "usque mirror ($TAG)" \
+            --notes "Mirror of \`$UPSTREAM\` **$TAG** — Linux usque binaries backed up for AsenaPlug \`install.sh\`. This is *not* the app release; see the newest \`v1.0.*\` for AsenaPlug.exe." \
+            --latest=false \
+            "$tmp"/*
+
+          echo "Yedeklendi: $TAG"
