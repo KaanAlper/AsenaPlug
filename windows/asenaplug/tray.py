@@ -541,7 +541,7 @@ class AsenaTray:
     # yerine; çakışma/thrashing yok, en son hedef kazanır, kendini iyileştirir.
     def set_target(self, transport: str, scope: str):
         """Modu UYGULA (bağlan/değiştir). İşlem sürerken yok sayılır (tek anda tek iş)."""
-        if self._busy():
+        if self._busy():   # dns-reload dahil (_busy) -> dns-reload sürerken op başlamaz (yarış YOK)
             return
         state.write_desired(transport, scope, connected=True)   # niyet: BAĞLI (oto-reconnect)
         self._warn_dpi_conflict()                               # GoodbyeDPI vs açıksa uyar
@@ -560,7 +560,7 @@ class AsenaTray:
         threading.Thread(target=check, daemon=True).start()
 
     def disconnect(self):
-        if self._busy():
+        if self._busy():   # dns-reload dahil -> dns-reload sürerken kes başlamaz (asena-off yarışı YOK)
             return
         state.write_desired(self._sel_transport, self._sel_scope, connected=False)  # niyet: KESİK
         self._start_op(("off",))
@@ -578,7 +578,11 @@ class AsenaTray:
     def _busy(self) -> bool:
         if self._op is not None:
             return True
-        return self._script_proc is not None and self._script_proc.poll() is None
+        if self._script_proc is not None and self._script_proc.poll() is None:
+            return True
+        # dns-reload de MEŞGUL sayılır -> sürerken op/watchdog/net-watch başlamaz + menü
+        # kilitli ("Değiştir"deki gibi) -> asena-off/on ile NRPT/dnsproxy yarışı olmaz.
+        return self._dns_reload_proc is not None and self._dns_reload_proc.poll() is None
 
     def _start_op(self, op):
         """op: ('on',transport,scope) | ('off',). Register gerekiyorsa önce onu halleder."""
@@ -625,6 +629,19 @@ class AsenaTray:
         tünel kurmasını engeller."""
         p = self._script_proc
         self._script_proc = None
+        if p is not None and p.poll() is None:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+
+    def _terminate_dns_reload(self):
+        """Çalışan arka-plan dns-reload'ı (asena-dns-reload.ps1) durdur. Bir op (bağlan/
+        kes/değiştir) onu zaten ezeceğinden (clean-slate/teardown), önce durdurulur ki iki
+        powershell NRPT/dnsproxy/route-sync üzerinde YARIŞMASIN (aksi halde disconnect'ten
+        sonra bayat NRPT + ölü dnsproxy kalıp blacklist domainleri çözülemezdi)."""
+        p = self._dns_reload_proc
+        self._dns_reload_proc = None
         if p is not None and p.poll() is None:
             try:
                 p.terminate()
@@ -678,11 +695,15 @@ class AsenaTray:
         if self._script_proc.poll() is None:      # süreç HÂLÂ çalışıyor
             self._op_ticks += 1
             if self._op_ticks > 90:               # ~45s -> vazgeç
-                self._terminate_proc()            # orphan asena-on'u ÖLDÜR (single-flight korunsun)
-                self._op = None
+                self._terminate_proc()            # asılı asena-on POWERSHELL'ini öldür
                 tail = _log_tail()
                 win.notify(APP_NAME, t("notify_timeout") + (f"\n{tail}" if tail else ""))
-                self.refresh()
+                # asena-on usque'yu AYRIK (Start-Process) başlatır -> powershell ölse de usque
+                # + yarım DNS/route/pin/firewall AYAKTA kalır (state.json yazılmadı -> tray
+                # 'disconnected' görür ama orphan tünel var). Düzgün teardown OP'u başlat
+                # (asena-off usque'yu adıyla öldürür + artıkları geri alır); single-flight
+                # korunur -> sonraki 'Bağlan' bu bitene dek bekler, yeni yarış YOK.
+                self._start_op(("off",))
                 return
             QTimer.singleShot(500, self._poll_op)
             return
@@ -727,13 +748,29 @@ class AsenaTray:
         dns-reload varsa atla (üst üste binmesin) veya bir op sürüyorsa bekle."""
         self.rebuild_blacklist_menu()           # menü sayacı her durumda tazelensin
         cur = state.current_state()
-        if cur is None or cur["scope"] == "full" or self._busy():
-            return
-        if self._dns_reload_proc is not None and self._dns_reload_proc.poll() is None:
-            self._bl_reload_timer.start(1000)   # önceki bitince tekrar dene
+        if cur is None or cur["scope"] == "full":
+            return                              # kapalı/full -> yenilemeye gerek yok (retry gereksiz)
+        # Bir op (connect/switch/off) VEYA önceki dns-reload sürüyorsa (ikisi de _busy):
+        # çakışmasın diye bekle, bitince TEKRAR dene. (Op sırasında eklenen domain
+        # uygulanmadan kalmasın.) cur selective+bağlı kaldıkça op bitince başarır -> sonsuz döngü yok.
+        if self._busy():
+            self._bl_reload_timer.start(1000)
             return
         self._dns_reload_proc = win.run_script("asena-dns-reload.ps1")
         win.notify(f"{APP_NAME} {t('notify_title_blacklist')}", t("notify_dns_reloading"))
+        self.refresh()                          # menüyü HEMEN kilitle ("Değiştir" gibi)
+        QTimer.singleShot(500, self._poll_dns_reload)
+
+    def _poll_dns_reload(self):
+        """dns-reload sürecini izle; bitince menüyü aç (refresh). _busy() zaten poll()
+        ile serbest kalır, bu sadece UI'yi ~3s timer'ı beklemeden anında güncellesin."""
+        if self._dns_reload_proc is None:
+            return
+        if self._dns_reload_proc.poll() is None:
+            QTimer.singleShot(500, self._poll_dns_reload)
+            return
+        self._dns_reload_proc = None            # bitti -> serbest + menü kilidini aç
+        self.refresh()
 
     # --- Geçici dosya-izleme (SADECE 'Düzenle' sonrası; kalıcı değil) ---
     def _start_blacklist_watch(self):
@@ -926,11 +963,16 @@ class AsenaTray:
         yeni tray onu devralır (kesintisiz güncelleme + copy-lock yarışı yok)."""
         if self._updating:
             return
-        # Bağlanma ortasında (asena-on uçuşta) çıkılırsa: süreci ÖLDÜR ki arka planda
-        # devam edip YÖNETİLMEYEN bir tünel kurmasın. Sonra state varsa düzgün teardown.
-        if self._op is not None and self._op[0] == "on":
-            self._terminate_proc()
-        if state.current_state() is None:
+        # Uçuşta bir asena-on olabilir: OP (bağlan/değiştir) VEYA net-watch re-pin (_op=None
+        # ama _script_proc dolu) — İKİSİNİ de koşulsuz durdur ki arka planda asena-off ile
+        # yarışmasın / yönetilmeyen tünel bırakmasın. dns-reload'ı da durdur.
+        had_inflight = self._op is not None or (
+            self._script_proc is not None and self._script_proc.poll() is None)
+        self._terminate_proc()
+        self._terminate_dns_reload()
+        # state varsa DÜZGÜN teardown; YA DA bağlanma/değiştirme ortasında çıkıldıysa (ayrık
+        # usque + yarım DNS/route kalmış olabilir, state.json yok) -> yine asena-off ile temizle.
+        if state.current_state() is None and not had_inflight:
             return
         try:
             win.run_script("asena-off.ps1", wait=True, timeout=20)
