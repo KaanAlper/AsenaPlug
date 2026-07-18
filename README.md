@@ -4,7 +4,7 @@
 
 Traffic looks like ordinary HTTPS (MASQUE over HTTP/2 or HTTP/3), so it survives Turkish ISP DPI/throttling where WireGuard gets shaped. **Physical internet stays the default** — only the domains you list are tunneled, unless you pick full‑tunnel.
 
-🖥️ **Windows 10/11** · 🐧 **Linux (Arch / Hyprland)**  ·  🌍 5 languages (EN/DE/ES/FR/TR)  ·  🆓 MIT
+🖥️ **Windows 10/11** · 🐧 **Linux — Arch & Debian families**  ·  🌍 5 languages (EN/DE/ES/FR/TR)  ·  🆓 MIT
 
 🇬🇧 [English](#english) · 🇹🇷 [Türkçe](#türkçe)
 
@@ -97,18 +97,23 @@ Admin PowerShell — tears down cleanly (NRPT, IPv6 firewall, routes, DNS) then 
 
 ---
 
-### 🐧 Linux (Arch / Hyprland)
+### 🐧 Linux (Arch & Debian families)
 
-Tested on **CachyOS / Arch + Hyprland** (end‑4 / illogical‑impulse dots).
+One `install.sh` auto‑detects your package manager and installs accordingly:
+**Arch family** (pacman — Arch, CachyOS, Manjaro, EndeavourOS…) and **Debian family**
+(apt — Debian, Ubuntu, Linux Mint, Pop!_OS, elementary…). Developed/tested on
+**CachyOS / Arch + Hyprland**; the Debian path is new (please report issues).
 
 #### Install
 ```bash
-# one‑liner
+# one‑liner (auto‑detects Arch vs Debian)
 curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.sh | bash
 # or from a clone
 git clone https://github.com/KaanAlper/AsenaPlug.git && cd AsenaPlug && ./install.sh
 ```
 You're prompted once for `sudo` (the script re‑launches as root) and once for `usque register` (creates `~/config.json`, your device identity — **back it up**).
+
+`usque` comes from the AUR on Arch, and from GitHub Releases (prebuilt Linux binary) everywhere else — mirrored to this repo (`usque-latest`) so install still works if upstream disappears. **Autostart** uses a Hyprland `exec` on Hyprland, otherwise a standard XDG autostart entry (GNOME/KDE/…). The **Force Asena › Add running app** picker needs Hyprland's `hyprctl`; on other desktops use interface/domain routing (the core blacklist feature works everywhere).
 
 The installer adds scoped `sudo` NOPASSWD commands (`asena-on`, `asena-off`, `asena-dns-reload`, …), the PySide6 tray (`~/.local/bin/asena-tray`), a Discord launcher that puts it in the `asena-only.slice` cgroup, config templates, and Hyprland autostart. Re‑running is safe (overwrite‑or‑skip).
 
@@ -260,18 +265,23 @@ Yönetici PowerShell — önce düzgün teardown (NRPT, IPv6 firewall, route, DN
 
 ---
 
-### 🐧 Linux (Arch / Hyprland)
+### 🐧 Linux (Arch & Debian aileleri)
 
-**CachyOS / Arch + Hyprland** (end‑4 / illogical‑impulse dots) üzerinde test edildi.
+Tek `install.sh` paket yöneticini otomatik algılar: **Arch ailesi** (pacman — Arch,
+CachyOS, Manjaro, EndeavourOS…) ve **Debian ailesi** (apt — Debian, Ubuntu, Linux Mint,
+Pop!_OS, elementary…). **CachyOS / Arch + Hyprland**'de geliştirildi/test edildi; Debian
+yolu yeni (sorun görürsen bildir).
 
 #### Kurulum
 ```bash
-# tek satır
+# tek satır (Arch mı Debian mı otomatik algılar)
 curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.sh | bash
 # ya da klondan
 git clone https://github.com/KaanAlper/AsenaPlug.git && cd AsenaPlug && ./install.sh
 ```
 Bir kez `sudo` (script kendini root olarak yeniden başlatır) ve bir kez `usque register` (`~/config.json` cihaz kimliğini oluşturur — **yedekle**) sorulur.
+
+`usque` Arch'ta AUR'dan, diğer her yerde GitHub Releases'ten (prebuilt Linux binary) gelir — upstream kaybolsa bile kurulum çalışsın diye bu repoya (`usque-latest`) yedeklenir. **Otomatik başlatma** Hyprland'de `exec`, diğerlerinde standart XDG autostart (GNOME/KDE/…). **Force Asena › Çalışan uygulama ekle** seçicisi Hyprland `hyprctl` gerektirir; diğer masaüstlerinde arayüz/alan yönlendirmesi kullan (asıl blacklist özelliği her yerde çalışır).
 
 Kurulum: kapsamı sınırlı `sudo` NOPASSWD komutları (`asena-on`, `asena-off`, `asena-dns-reload`, …), PySide6 tray (`~/.local/bin/asena-tray`), Discord'u `asena-only.slice` cgroup'una koyan başlatıcı, config şablonları ve Hyprland autostart. Tekrar çalıştırmak güvenli.
 
