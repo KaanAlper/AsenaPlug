@@ -43,12 +43,21 @@ fi
 say "Distro: $PRETTY  [$DISTRO ailesi]  ($(uname -m))"
 
 if [ "$(id -u)" -ne 0 ]; then
-    say "Re-launching under sudo for system installs…"
-    exec sudo -E "$0" "$@"
+    # './install.sh' gibi DOSYADAN çalıştırıldıysa sudo ile kendini yeniden başlat.
+    # 'curl | bash' (pipe) durumunda $0 dosya DEĞİL -> re-exec kırılır (root bash pipe'ın
+    # KALANINI okur, tanımsız); bu durumda kullanıcıyı 'curl | sudo bash'e yönlendir.
+    if [ -f "$0" ]; then
+        say "Re-launching under sudo for system installs…"
+        exec sudo -E "$0" "$@"
+    else
+        die "Root gerekli. Şöyle çalıştır:  curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.sh | sudo bash"
+    fi
 fi
 
 HAVE_YAY=0
-if [ "$DISTRO" = arch ] && sudo -u "$TARGET_USER" command -v yay >/dev/null 2>&1; then
+# NOT: 'sudo -u user command -v yay' ÇALIŞMAZ ('command' builtin, exec edilemez) ->
+# bir login-shell içinde çağır ki builtin çözülsün.
+if [ "$DISTRO" = arch ] && sudo -u "$TARGET_USER" bash -lc 'command -v yay' >/dev/null 2>&1; then
     HAVE_YAY=1
 fi
 
@@ -70,9 +79,20 @@ case "$DISTRO" in
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null 2>&1 || warn "apt-get update başarısız (devam)."
     # notify-send=libnotify-bin; systemd zaten var. unzip/curl usque binary'si için.
+    # python3-pip: PySide6 apt paketi yoksa pip fallback'i çalışabilsin.
     apt-get install -y -qq \
-        libnotify-bin sudo iproute2 dnsmasq nftables unzip curl ca-certificates >/dev/null 2>&1 \
+        libnotify-bin sudo iproute2 dnsmasq nftables unzip curl ca-certificates python3-pip >/dev/null 2>&1 \
         || warn "Bazı paketler kurulamadı (devam ediliyor)."
+    # Debian, dnsmasq paketini kurunca sistem 'dnsmasq.service'ini OTOMATİK başlatır ve
+    # 0.0.0.0:53'e bağlanır -> asena dnsmasq'ımızın 127.0.0.2:53 bind'i EADDRINUSE ile
+    # fail eder (asena-on abort). Sistem instance'ını durdur/devre dışı bırak; kendi
+    # instance'ımızı asena-on elle başlatır. (Ubuntu: systemd-resolved 127.0.0.53'te — çakışmaz.)
+    systemctl disable --now dnsmasq >/dev/null 2>&1 || true
+    # systemd-resolved: selective-DNS mekanizması (asena-on 'resolvectl') buna dayanır.
+    # Ubuntu'da varsayılan aktif; Debian 12+'da AYRI paket. Ayrı apt çağrısı — yoksa
+    # çekirdek paketleri bloklamasın. Best-effort: yoksa selective-DNS devre dışı kalır.
+    apt-get install -y -qq systemd-resolved >/dev/null 2>&1 || true
+    systemctl enable --now systemd-resolved >/dev/null 2>&1 || true
     # PySide6: apt (python3-pyside6, Debian 12+/Ubuntu 22.04+); yoksa pip (PEP 668).
     if ! sudo -u "$TARGET_USER" python3 -c 'import PySide6' 2>/dev/null; then
         apt-get install -y -qq python3-pyside6 >/dev/null 2>&1 \
@@ -203,9 +223,13 @@ ip rule add fwmark "$ASENA_MARK" table "$ASENA_TABLE" priority 100
 
 # rp_filter: asimetrik routing icin gevsetilir. Mevcut deger saklanir, asena-off geri yukler.
 mkdir -p "$RUN_DIR" 2>/dev/null || true
-sysctl -n net.ipv4.conf.all.rp_filter > "$RUN_DIR/rpfilter.all" 2>/dev/null || true
-sysctl -n "net.ipv4.conf.${DEV}.rp_filter" > "$RUN_DIR/rpfilter.dev" 2>/dev/null || true
-printf '%s\n' "$DEV" > "$RUN_DIR/rpfilter.devname" 2>/dev/null || true
+# SADECE henuz saklanmadiysa kaydet: asena-off'suz cift asena-on'da orijinali '2' ile
+# ezip asena-off'un yanlis (2) deger geri yuklemesini onle (idempotent snapshot).
+if [ ! -f "$RUN_DIR/rpfilter.all" ]; then
+    sysctl -n net.ipv4.conf.all.rp_filter > "$RUN_DIR/rpfilter.all" 2>/dev/null || true
+    sysctl -n "net.ipv4.conf.${DEV}.rp_filter" > "$RUN_DIR/rpfilter.dev" 2>/dev/null || true
+    printf '%s\n' "$DEV" > "$RUN_DIR/rpfilter.devname" 2>/dev/null || true
+fi
 sysctl -wq net.ipv4.conf.all.rp_filter=2
 sysctl -wq "net.ipv4.conf.${DEV}.rp_filter=2" 2>/dev/null || true
 
@@ -278,13 +302,19 @@ fi
 
 # dnsmasq: config uret ve baslat.
 pkill -f "dnsmasq.*asena" 2>/dev/null || true
+sleep 0.3                                  # onceki instance 127.0.0.2:53'u biraksin (bind yarisi)
 /usr/local/bin/asena-dnsmasq-gen
 dnsmasq -C /etc/dnsmasq-asena.conf --pid-file=/run/dnsmasq-asena.pid
 
-# Resolved'i dnsmasq'a yonlendir.
-resolvectl dns "$DEV" 127.0.0.2
-resolvectl domain "$DEV" "~."
-resolvectl default-route "$DEV" true
+# Resolved'i dnsmasq'a yonlendir. systemd-resolved GEREKIR; yoksa selective-DNS calismaz
+# ama tunel + app/iface routing ayakta kalir -> 'set -e' altinda ABORT ETME (guard'li).
+if command -v resolvectl >/dev/null 2>&1; then
+    resolvectl dns "$DEV" 127.0.0.2 || true
+    resolvectl domain "$DEV" "~." || true
+    resolvectl default-route "$DEV" true || true
+else
+    echo "UYARI: resolvectl yok (systemd-resolved gerekli) -> selective DNS atlandi." >&2
+fi
 
 echo "Asena on ($MODE) gw=$GW dev=$DEV user=$USER_NAME asena_iface=$IFACE_COUNT slice=${SLICE_REL_PATH:-?}"
 EOF
@@ -505,7 +535,7 @@ from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QInputDialog,
 )
 from PySide6.QtGui import QIcon, QAction, QActionGroup, QPainter, QColor, QPen, QBrush, QPixmap, QFont
-from PySide6.QtCore import QTimer, Qt, QRect, QLocale
+from PySide6.QtCore import QTimer, Qt, QRect, QLocale, QFileSystemWatcher
 
 ASENA_OFF = ["sudo", "-n", "/usr/local/bin/asena-off"]
 BYPASS_RELOAD = ["sudo", "-n", "/usr/local/bin/asena-bypass-reload"]
@@ -547,7 +577,7 @@ TRANSLATIONS = {
         "dlg_add_label": "Domain (e.g. example.com):",
         "notify_title_blacklist": "Blacklist",
         "notify_exists": "{domain} already exists.",
-        "notify_added": "{domain} added. Use 'Reload DNS' to activate.",
+        "notify_added": "{domain} added to the blacklist.",
         "notify_open_first": "Open Asena first — DNS can't reload while off.",
         "notify_dns_reloading": "Reloading DNS…",
         "tip_connected": "{app}: Connected ({detail})",
@@ -577,7 +607,7 @@ TRANSLATIONS = {
         "dlg_add_label": "Domain (z. B. example.com):",
         "notify_title_blacklist": "Blacklist",
         "notify_exists": "{domain} ist bereits vorhanden.",
-        "notify_added": "{domain} hinzugefügt. Mit 'DNS neu laden' aktivieren.",
+        "notify_added": "{domain} zur Blacklist hinzugefügt.",
         "notify_open_first": "Öffne zuerst Asena — DNS lädt nicht, wenn aus.",
         "notify_dns_reloading": "DNS wird neu geladen…",
         "tip_connected": "{app}: Verbunden ({detail})",
@@ -606,7 +636,7 @@ TRANSLATIONS = {
         "dlg_add_label": "Dominio (p. ej. example.com):",
         "notify_title_blacklist": "Lista negra",
         "notify_exists": "{domain} ya existe.",
-        "notify_added": "{domain} añadido. Usa 'Recargar DNS' para activar.",
+        "notify_added": "{domain} añadido a la lista negra.",
         "notify_open_first": "Abre Asena primero — el DNS no se recarga si está apagado.",
         "notify_dns_reloading": "Recargando DNS…",
         "tip_connected": "{app}: Conectado ({detail})",
@@ -635,7 +665,7 @@ TRANSLATIONS = {
         "dlg_add_label": "Domaine (ex. example.com) :",
         "notify_title_blacklist": "Liste noire",
         "notify_exists": "{domain} existe déjà.",
-        "notify_added": "{domain} ajouté. Utilisez « Recharger le DNS » pour activer.",
+        "notify_added": "{domain} ajouté à la liste noire.",
         "notify_open_first": "Ouvrez d'abord Asena — le DNS ne se recharge pas hors ligne.",
         "notify_dns_reloading": "Rechargement du DNS…",
         "tip_connected": "{app} : Connecté ({detail})",
@@ -664,7 +694,7 @@ TRANSLATIONS = {
         "dlg_add_label": "Domain (örn: example.com):",
         "notify_title_blacklist": "Blacklist",
         "notify_exists": "{domain} zaten mevcut.",
-        "notify_added": "{domain} eklendi. 'DNS yenile' ile aktif et.",
+        "notify_added": "{domain} blacklist'e eklendi.",
         "notify_open_first": "Önce Asena'ı aç — kapalıyken DNS yenilenmez.",
         "notify_dns_reloading": "DNS yenileniyor…",
         "tip_connected": "{app}: Bağlı ({detail})",
@@ -951,6 +981,40 @@ def notify(title: str, body: str, icon: str = "network-vpn") -> None:
 
 # ---------------------------------------------------------------- Tray
 
+class _StayMenu(QMenu):
+    """Tiklamada menu KAPANMASIN (dil/mod secerken tek menude kal). Yalniz
+    close_actions'taki (Cikis) kapatir. Alt-menu acan ogeler (Force Asena/Blacklist/
+    Dil) normal davranir (act.menu() ile ayirt edilir)."""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.close_actions = set()
+
+    def mouseReleaseEvent(self, e):
+        act = self.activeAction()
+        if (act is not None and act.isEnabled() and act.menu() is None
+                and act not in self.close_actions):
+            act.trigger()          # tetikle ama menuyu ACIK tut
+            return
+        super().mouseReleaseEvent(e)
+
+
+# Menu eylem renk noktalari: Kes = acik kirmizi, Baglan (HTTP/2·HTTP/3) = acik yesil.
+DOT_RED = QColor(255, 107, 107)     # #ff6b6b
+DOT_GREEN = QColor(105, 219, 124)   # #69db7c
+
+
+def _dot_icon(color, size=12):
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(color)
+    p.drawEllipse(1, 1, size - 2, size - 2)
+    p.end()
+    return QIcon(pm)
+
+
 class AsenaTray:
     def __init__(self):
         global SLICE_PROCS
@@ -973,6 +1037,18 @@ class AsenaTray:
 
         self.icon_on = make_icon(True)
         self.icon_off = make_icon(False)
+        # Menu renk noktalari (QApplication sonrasi, _build_menu ONCESI olusturulur)
+        self._dot_green = _dot_icon(DOT_GREEN)   # baglan (HTTP/2·HTTP/3)
+        self._dot_red = _dot_icon(DOT_RED)       # kes (disconnect)
+
+        # Blacklist dosya-izleme: KALICI DEGIL — sadece "Duzenle" sonrasi editoru
+        # dinler, sessizlikten sonra kendini kapatir. "Domain ekle" DOGRUDAN yeniler.
+        self._bl_watcher = None
+        self._dns_reload_proc = None
+        self._bl_reload_timer = QTimer(); self._bl_reload_timer.setSingleShot(True)
+        self._bl_reload_timer.timeout.connect(self._do_blacklist_reload)
+        self._bl_watch_stop_timer = QTimer(); self._bl_watch_stop_timer.setSingleShot(True)
+        self._bl_watch_stop_timer.timeout.connect(self._stop_blacklist_watch)
 
         self.tray = QSystemTrayIcon()
         self.tray.setIcon(self.icon_off)
@@ -993,23 +1069,26 @@ class AsenaTray:
     # -------- Menu (yeniden kurulabilir: dil değişince etiketler güncellenir)
 
     def _build_menu(self):
-        self.menu = QMenu()
+        self.menu = _StayMenu()
         self.disconnect_action = QAction(t("disconnect"))
+        self.disconnect_action.setIcon(self._dot_red)           # Kes = acik kirmizi
         self.disconnect_action.triggered.connect(self.disconnect)
 
         self.http2_action = QAction("HTTP/2")   # teknik etiket — çevrilmez
         self.http2_action.setCheckable(True)
+        self.http2_action.setIcon(self._dot_green)              # baglan = acik yesil
         self.http2_action.triggered.connect(lambda: self.set_mode("http2"))
 
         self.http3_action = QAction("HTTP/3")
         self.http3_action.setCheckable(True)
+        self.http3_action.setIcon(self._dot_green)
         self.http3_action.triggered.connect(lambda: self.set_mode("http3"))
 
-        self.bypass_menu = QMenu(t("force_asena"))
-        self.blacklist_menu = QMenu(t("blacklist_menu"))
+        self.bypass_menu = _StayMenu(t("force_asena"))
+        self.blacklist_menu = _StayMenu(t("blacklist_menu"))
 
         # Dil alt menüsü (çıkışın hemen üstünde) — her dil KENDİ adıyla, aktif işaretli
-        self.language_menu = QMenu(t("language"))
+        self.language_menu = _StayMenu(t("language"))
         self.language_group = QActionGroup(self.language_menu)
         self.language_group.setExclusive(True)
         cur = _lang_get()
@@ -1035,6 +1114,7 @@ class AsenaTray:
         self.menu.addMenu(self.language_menu)
         self.menu.addSeparator()
         self.menu.addAction(self.quit_action)
+        self.menu.close_actions = {self.quit_action}   # SADECE Cikis menuyu kapatir
         self.tray.setContextMenu(self.menu)
         self.menu.aboutToShow.connect(self._rebuild_menus)
         self._rebuild_menus()
@@ -1044,8 +1124,18 @@ class AsenaTray:
             return
         _lang_set(code)
         _lang_save(code)
-        self._build_menu()   # tüm etiketleri yeni dille yeniden üret
-        self.refresh()       # tooltip/ikon güncelle
+        self._retranslate_menu()   # yeniden KURMA -> acik menu kapanmaz, canli cevrilir
+
+    def _retranslate_menu(self):
+        """Menuyu yeniden kurmadan tum etiketleri yeni dile cevir (acik menu korunur).
+        HTTP/2·HTTP/3 ve dillerin kendi adlari cevrilmez -> dokunulmaz."""
+        self.disconnect_action.setText(t("disconnect"))
+        self.bypass_menu.setTitle(t("force_asena"))
+        self.blacklist_menu.setTitle(t("blacklist_menu"))
+        self.language_menu.setTitle(t("language"))
+        self.quit_action.setText(t("quit"))
+        self._rebuild_menus()      # bypass + blacklist ogeleri yeni dille
+        self.refresh()
 
     # -------- Asena toggle
 
@@ -1219,9 +1309,8 @@ class AsenaTray:
 
         add_action = self.blacklist_menu.addAction(t("bl_add"))
         add_action.triggered.connect(self.prompt_add_domain)
-
-        reload_action = self.blacklist_menu.addAction(t("bl_reload"))
-        reload_action.triggered.connect(self.reload_dns)
+        # "DNS yenile" tusu KALDIRILDI: ekleme dogrudan yeniler, duzenleme dosya-
+        # izleyiciyle otomatik yenilenir (kullanici elle yenilemesin).
 
     def open_blacklist_editor(self):
         BLACKLIST_PATH.touch(exist_ok=True)
@@ -1229,6 +1318,7 @@ class AsenaTray:
             ["xdg-open", str(BLACKLIST_PATH)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        self._start_blacklist_watch()   # editorle duzenlerken degisimi gecici dinle
 
     def prompt_add_domain(self):
         domain, ok = QInputDialog.getText(None, t("dlg_add_title"), t("dlg_add_label"))
@@ -1247,15 +1337,51 @@ class AsenaTray:
                 f.write("\n")
             f.write(domain + "\n")
         notify(t("notify_title_blacklist"), t("notify_added", domain=domain))
-        self.rebuild_blacklist_menu()
+        self._do_blacklist_reload()   # bagliysa DOGRUDAN sicak yenile; kapaliysa sessiz
 
-    def reload_dns(self):
-        bl_title = f"Asena {t('notify_title_blacklist')}"
+    # -------- Sicak yenileme (kapat/ac gerekmez) + gecici dosya-izleme
+    def _do_blacklist_reload(self):
+        """Blacklist degisti -> tuneli koparmadan yenile (asena-dns-reload). Kapali ise
+        sessiz (baglaninca alinir). Calisan reload varsa uste binmesin diye bekle."""
+        self.rebuild_blacklist_menu()
         if current_mode() is None:
-            notify(bl_title, t("notify_open_first"))
             return
-        subprocess.Popen(DNS_RELOAD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        notify(bl_title, t("notify_dns_reloading"))
+        if self._dns_reload_proc is not None and self._dns_reload_proc.poll() is None:
+            self._bl_reload_timer.start(1000)
+            return
+        self._dns_reload_proc = subprocess.Popen(
+            DNS_RELOAD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        notify(f"Asena {t('notify_title_blacklist')}", t("notify_dns_reloading"))
+
+    def _start_blacklist_watch(self):
+        if self._bl_watcher is None:
+            self._bl_watcher = QFileSystemWatcher()
+            self._bl_watcher.fileChanged.connect(self._on_blacklist_changed)
+            self._bl_watcher.directoryChanged.connect(self._on_blacklist_dir_changed)
+        p = str(BLACKLIST_PATH)
+        if BLACKLIST_PATH.exists() and p not in self._bl_watcher.files():
+            self._bl_watcher.addPath(p)
+        d = str(BLACKLIST_PATH.parent)
+        if d not in self._bl_watcher.directories():
+            self._bl_watcher.addPath(d)
+        self._bl_watch_stop_timer.start(120000)   # ~2 dk sessizlikten sonra dinlemeyi birak
+
+    def _on_blacklist_changed(self, _p):
+        self._bl_reload_timer.start(800)          # debounce
+        self._bl_watch_stop_timer.start(120000)   # aktif duzenleme -> pencereyi uzat
+
+    def _on_blacklist_dir_changed(self, _d):
+        p = str(BLACKLIST_PATH)
+        if BLACKLIST_PATH.exists() and p not in self._bl_watcher.files():
+            self._bl_watcher.addPath(p)             # atomik-kaydet (sil+yarat) -> geri ekle
+            self._bl_reload_timer.start(800)
+            self._bl_watch_stop_timer.start(120000)
+
+    def _stop_blacklist_watch(self):
+        if self._bl_watcher is not None:
+            paths = self._bl_watcher.files() + self._bl_watcher.directories()
+            if paths:
+                self._bl_watcher.removePaths(paths)
 
     # -------- Polling
 
