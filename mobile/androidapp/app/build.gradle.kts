@@ -42,7 +42,10 @@ android {
     buildFeatures { compose = true }
 
     buildTypes {
-        getByName("debug") { isMinifyEnabled = false }
+        getByName("debug") {
+            isMinifyEnabled = false
+            applicationIdSuffix = ".dev"   // debug = com.kaanalper.asenaplug.dev -> Play sürümünün yanına kurulur (imza çakışmaz)
+        }
         getByName("release") {
             isMinifyEnabled = false   // aar native kod içeriyor; şimdilik shrink yok
             ndk { debugSymbolLevel = "SYMBOL_TABLE" }   // AAB'ye native sembol tablosu (Play uyarısı)
