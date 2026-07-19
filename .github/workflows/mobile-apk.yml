@@ -99,5 +99,5 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.kaanalper.asenaplug
           releaseFiles: mobile/androidapp/app/build/outputs/bundle/release/*.aab
-          track: beta          # kapalı beta (track adı farklıysa değiştir)
+          track: alpha         # "Kapalı Test - Alpha" track'i
           status: completed
