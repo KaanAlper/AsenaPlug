@@ -1,10 +1,10 @@
-<!-- Adaptive icon foreground: 108dp tuval. Logo 256x256 (dikey kenardan-kenara).
-     gravity=fill -> bitmap inset bounds'a ÖLÇEKLENİR (center değil: center native 256dp
-     çizip kırpıyordu = "scale edilmiyor" bug'ı). inset 24dp -> logo ~60dp yükseklik,
-     circle/squircle mask safe-zone (66dp) içinde tam görünür. -->
+<!-- Adaptive icon foreground: 108dp tuval. gravity=fill -> bitmap inset bounds'a ölçeklenir.
+     inset 22dp -> logo ~64dp: Android resmi 66dp GÜVENLİ ALAN sınırı altında kalır (fazlası
+     maskeli görüntü alanında KIRPILIR). MIUI foreground'u ayrıca zoom'ladığı için 66 yerine
+     64dp seçildi -> MIUI'de bile kırpılmaz. Opak zemin sayesinde bu boyut "küçük" görünmez. -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:insetLeft="12dp" android:insetTop="12dp"
-    android:insetRight="12dp" android:insetBottom="12dp">
+    android:insetLeft="22dp" android:insetTop="22dp"
+    android:insetRight="22dp" android:insetBottom="22dp">
     <bitmap
         android:src="@drawable/asena_logo"
         android:gravity="fill" />
