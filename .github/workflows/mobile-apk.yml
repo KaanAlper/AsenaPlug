@@ -92,12 +92,12 @@ jobs:
           path: mobile/androidapp/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
-      - name: Play Store'a yükle (internal track) — SADECE service account secret'ı varsa
+      - name: Play Store'a yükle (kapalı beta track) — SADECE service account secret'ı varsa
         if: ${{ env.PLAY_SA_JSON != '' }}
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.kaanalper.asenaplug
           releaseFiles: mobile/androidapp/app/build/outputs/bundle/release/*.aab
-          track: internal
+          track: beta          # kapalı beta (track adı farklıysa değiştir)
           status: completed
