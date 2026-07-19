@@ -21,7 +21,8 @@ Diller: `tr-TR`, `en-US`.
 **A) fastlane supply ile (otomatik, önerilen):**
 ```
 cd mobile/androidapp
-fastlane supply --aab app/build/outputs/bundle/release/app-release.aab \
+fastlane supply --package_name com.kaanalper.asenaplug \
+  --aab app/build/outputs/bundle/release/app-release.aab \
   --json_key play-service-account.json --track internal
 ```
 `supply`, metadata/ altındaki tüm metin + görselleri de yükler.

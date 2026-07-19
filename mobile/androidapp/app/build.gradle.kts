@@ -10,7 +10,7 @@ android {
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "asena.plug"
+        applicationId = "com.kaanalper.asenaplug"   // Play paket kimliği (namespace=asena.plug kaynak paketi ayrı)
         minSdk = 26
         targetSdk = 34
         // CI her build'de artırır (Play aynı versionCode'u reddeder); yerelde 1.
