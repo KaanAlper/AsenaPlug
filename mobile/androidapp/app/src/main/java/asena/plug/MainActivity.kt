@@ -248,9 +248,10 @@ private fun AppContent() {
                     skipLabel = s.tutSkip, tapHint = s.tutTapHint, p = p,
                     onNext = {
                         if (tutStep < TUTORIAL_STEPS.size - 1) tutStep++
-                        else { tutActive = false; TutorialStore.setDone(ctx, true); toggle() }  // son: gerçek bağlan
+                        // son: Bağlan sekmesinde KAL (Ayarlar'a gitme) + gerçek bağlan
+                        else { tab = 0; tutActive = false; TutorialStore.setDone(ctx, true); toggle() }
                     },
-                    onSkip = { tutActive = false; TutorialStore.setDone(ctx, true) }
+                    onSkip = { tab = TUTORIAL_STEPS[tutStep].first; tutActive = false; TutorialStore.setDone(ctx, true) }
                 )
             }
         }
