@@ -154,17 +154,13 @@ fun TutorialOverlay(
                 }
             }
 
-            Spacer(Modifier.height(14.dp))
-            if (isLast) {
-                // son adım: buton YOK — sadece orb'a dokunulmalı
-                Text(tapHint, color = p.accentText, fontFamily = Jet, fontSize = 12.sp)
-            } else {
+            // son adım: buton YOK — sadece orb'a dokunulmalı (metin ipucu kaldırıldı).
+            if (!isLast) {
+                Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(skipLabel, color = p.faint, fontFamily = Jet, fontSize = 12.sp,
                         modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onSkip() }.padding(8.dp))
                     Spacer(Modifier.weight(1f))
-                    Text(tapHint, color = p.faint, fontFamily = Jet, fontSize = 10.sp)
-                    Spacer(Modifier.width(12.dp))
                     Box(
                         Modifier.clip(RoundedCornerShape(11.dp)).background(p.accent)
                             .clickable { onNext() }.padding(horizontal = 18.dp, vertical = 9.dp)
