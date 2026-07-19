@@ -59,10 +59,16 @@ class AsenaVpnService : VpnService() {
             .setOngoing(true)
             .setContentIntent(pi)
             .build()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(NOTIF_ID, notif)
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                // systemExempted: VpnService AKTİFKEN (establish sonrası) çağrılmalı ki sistem muaf tutsun.
+                startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
+            } else {
+                startForeground(NOTIF_ID, notif)
+            }
+        } catch (e: Exception) {
+            // Muafiyet reddedilirse ÇÖKME: foreground'suz devam (VPN çalışır, arka plan koruması zayıflar).
+            Log.e(TAG, "startForeground(systemExempted) başarısız: ${e.message}", e)
         }
     }
 
@@ -81,7 +87,6 @@ class AsenaVpnService : VpnService() {
             return
         }
         TunnelState.status.value = TunnelStatus.CONNECTING
-        ensureForeground("MASQUE el sıkışıyor…")   // servisi hemen foreground yap (öldürülme koruması)
         try {
             val cfg = ConfigStore.getOrLoad(this)
             if (cfg == null) {
@@ -119,6 +124,8 @@ class AsenaVpnService : VpnService() {
                 return
             }
             tun = pfd
+            // VPN artık AKTİF -> systemExempted foreground service geçerli (çökmez).
+            ensureForeground("MASQUE el sıkışıyor…")
 
             val fd = pfd.detachFd()
             val useSelective = SettingsStore.isBlacklist

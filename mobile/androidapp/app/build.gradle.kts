@@ -12,7 +12,7 @@ android {
     defaultConfig {
         applicationId = "com.kaanalper.asenaplug"   // Play paket kimliği (namespace=asena.plug kaynak paketi ayrı)
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35   // Play zorunluluğu (Android 15); edge-to-edge zaten setDecorFitsSystemWindows(false)+systemBarsPadding
         // CI her build'de artırır (Play aynı versionCode'u reddeder); yerelde 1.
         versionCode = (System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull()) ?: 1
         versionName = System.getenv("ANDROID_VERSION_NAME") ?: "0.1-poc"
@@ -45,6 +45,7 @@ android {
         getByName("debug") { isMinifyEnabled = false }
         getByName("release") {
             isMinifyEnabled = false   // aar native kod içeriyor; şimdilik shrink yok
+            ndk { debugSymbolLevel = "SYMBOL_TABLE" }   // AAB'ye native sembol tablosu (Play uyarısı)
             val ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
             signingConfig = if (ksPath != null && file(ksPath).exists())
                 signingConfigs.getByName("release") else null
