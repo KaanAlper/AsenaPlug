@@ -1,5 +1,12 @@
 package asena.plug
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -9,7 +16,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,31 +66,37 @@ val TUTORIAL_STEPS = listOf(
 )
 
 /**
- * Spotlight overlay: ekranı karartır, hedefi açık bırakır + ring çizer, açıklama kartı gösterir.
- * Vurgulanan yere (veya "Sonraki") dokununca ilerler; "Atla" turu bitirir.
+ * Spotlight overlay (animasyonlu): karartır, hedefi açık bırakır + ring, açıklama kartı KAYARAK geçer,
+ * spotlight yumuşak kayar. Son adım: buton YOK — sadece gerçek Bağlan (orb) tuşuna dokununca tamamlanır.
  */
 @Composable
 fun TutorialOverlay(
-    target: Rect?, title: String, desc: String,
-    stepIndex: Int, stepCount: Int, skipLabel: String, tapHint: String,
-    p: Palette, onNext: () -> Unit, onSkip: () -> Unit
+    target: Rect?, steps: List<Pair<String, String>>, stepIndex: Int,
+    skipLabel: String, tapHint: String, p: Palette, onNext: () -> Unit, onSkip: () -> Unit
 ) {
     val density = LocalDensity.current
     val padPx = with(density) { 10.dp.toPx() }
+    val stepCount = steps.size
+    val isLast = stepIndex == stepCount - 1
+
+    // hedef null olabiliyor (sekme geçişinde 1 kare) -> son geçerli hedefi tut. Highlight ANLIK
+    // (animasyonsuz) -> her-kare recompose yok -> fps drop yok. Sadece info box slide olur.
+    var lastRect by remember { mutableStateOf<Rect?>(null) }
+    LaunchedEffect(target) { if (target != null) lastRect = target }
+    val shown = target ?: lastRect
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val hPx = with(density) { maxHeight.toPx() }
 
         Canvas(Modifier.fillMaxSize()) {
             val dim = Color.Black.copy(alpha = 0.76f)
-            val t = target
-            if (t == null) {
+            if (shown == null) {
                 drawRect(dim)
             } else {
-                val l = (t.left - padPx).coerceAtLeast(0f)
-                val tp = (t.top - padPx).coerceAtLeast(0f)
-                val r = (t.right + padPx).coerceAtMost(size.width)
-                val b = (t.bottom + padPx).coerceAtMost(size.height)
+                val l = (shown.left - padPx).coerceAtLeast(0f)
+                val tp = (shown.top - padPx).coerceAtLeast(0f)
+                val r = (shown.right + padPx).coerceAtMost(size.width)
+                val b = (shown.bottom + padPx).coerceAtMost(size.height)
                 drawRect(dim, Offset(0f, 0f), Size(size.width, tp))
                 drawRect(dim, Offset(0f, b), Size(size.width, size.height - b))
                 drawRect(dim, Offset(0f, tp), Size(l, b - tp))
@@ -90,8 +108,7 @@ fun TutorialOverlay(
             }
         }
 
-        // tap-catcher: hedefe dokununca ilerle. Caption'ın ALTINDA -> caption butonları (Skip, →)
-        // üstte kaldığı için tıklamaları alır; hedef dışına dokunma burada yutulur.
+        // tap-catcher (caption'ın ALTINDA): GERÇEK hedefe dokununca ilerle (animasyonlu değil, kesin konum)
         Box(Modifier.fillMaxSize().pointerInput(target, stepIndex) {
             detectTapGestures { o ->
                 val t = target
@@ -102,37 +119,56 @@ fun TutorialOverlay(
             }
         })
 
-        // açıklama kartı: hedef üst yarıdaysa altına, alt yarıdaysa üstüne
-        val below = target == null || (target.top + target.bottom) / 2f < hPx * 0.52f
-        val captionYpx = if (target == null) hPx * 0.5f
-        else if (below) (target.bottom + padPx + with(density) { 18.dp.toPx() })
-        else (target.top - padPx - with(density) { 190.dp.toPx() }).coerceAtLeast(with(density) { 60.dp.toPx() })
+        // açıklama kartı — hedefin altına/üstüne, YUMUŞAK kayar (animasyonlu Y)
+        val below = shown == null || (shown.top + shown.bottom) / 2f < hPx * 0.52f
+        val targetY = if (shown == null) hPx * 0.5f
+        else if (below) shown.bottom + padPx + with(density) { 18.dp.toPx() }
+        else (shown.top - padPx - with(density) { 210.dp.toPx() }).coerceAtLeast(with(density) { 60.dp.toPx() })
 
         Column(
             Modifier
-                .offset { IntOffset(0, captionYpx.toInt()) }
+                .offset { IntOffset(0, targetY.toInt()) }
                 .padding(horizontal = 22.dp)
                 .clip(RoundedCornerShape(18.dp))
                 .background(p.surface)
                 .border(1.dp, p.accent.copy(alpha = .35f), RoundedCornerShape(18.dp))
                 .padding(18.dp)
         ) {
-            Text("${stepIndex + 1}/$stepCount", color = p.accentText, fontFamily = Jet, fontSize = 11.sp)
-            Spacer(Modifier.height(6.dp))
-            Text(title, color = p.text, fontFamily = Sora, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-            Spacer(Modifier.height(6.dp))
-            Text(desc, color = p.muted, fontFamily = Sora, fontSize = 14.sp)
+            // metin: adım değişince SLIDE + FADE
+            AnimatedContent(
+                targetState = stepIndex,
+                transitionSpec = {
+                    (slideInHorizontally(tween(320)) { it / 3 } + fadeIn(tween(320))) togetherWith
+                        (slideOutHorizontally(tween(220)) { -it / 3 } + fadeOut(tween(180)))
+                },
+                label = "tutText"
+            ) { si ->
+                val (title, desc) = steps.getOrElse(si) { "" to "" }
+                Column {
+                    Text("${si + 1}/$stepCount", color = p.accentText, fontFamily = Jet, fontSize = 11.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(title, color = p.text, fontFamily = Sora, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                    Spacer(Modifier.height(6.dp))
+                    Text(desc, color = p.muted, fontFamily = Sora, fontSize = 14.sp)
+                }
+            }
+
             Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(skipLabel, color = p.faint, fontFamily = Jet, fontSize = 12.sp,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onSkip() }.padding(8.dp))
-                Spacer(Modifier.weight(1f))
-                Text(tapHint, color = p.faint, fontFamily = Jet, fontSize = 10.sp)
-                Spacer(Modifier.width(12.dp))
-                Box(
-                    Modifier.clip(RoundedCornerShape(11.dp)).background(p.accent)
-                        .clickable { onNext() }.padding(horizontal = 18.dp, vertical = 9.dp)
-                ) { Text(if (stepIndex == stepCount - 1) "✓" else "→", color = p.onAccent, fontFamily = Sora, fontSize = 15.sp, fontWeight = FontWeight.Black) }
+            if (isLast) {
+                // son adım: buton YOK — sadece orb'a dokunulmalı
+                Text(tapHint, color = p.accentText, fontFamily = Jet, fontSize = 12.sp)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(skipLabel, color = p.faint, fontFamily = Jet, fontSize = 12.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onSkip() }.padding(8.dp))
+                    Spacer(Modifier.weight(1f))
+                    Text(tapHint, color = p.faint, fontFamily = Jet, fontSize = 10.sp)
+                    Spacer(Modifier.width(12.dp))
+                    Box(
+                        Modifier.clip(RoundedCornerShape(11.dp)).background(p.accent)
+                            .clickable { onNext() }.padding(horizontal = 18.dp, vertical = 9.dp)
+                    ) { Text("→", color = p.onAccent, fontFamily = Sora, fontSize = 15.sp, fontWeight = FontWeight.Black) }
+                }
             }
         }
     }

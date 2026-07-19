@@ -226,14 +226,12 @@ private fun AppContent() {
             // spotlight tutorial overlay
             if (tutActive) {
                 val (_, key) = TUTORIAL_STEPS[tutStep]
-                val step = s.tutorial.getOrElse(tutStep) { "" to "" }
                 TutorialOverlay(
-                    target = tutorial.targets[key], title = step.first, desc = step.second,
-                    stepIndex = tutStep, stepCount = TUTORIAL_STEPS.size,
+                    target = tutorial.targets[key], steps = s.tutorial, stepIndex = tutStep,
                     skipLabel = s.tutSkip, tapHint = s.tutTapHint, p = p,
                     onNext = {
                         if (tutStep < TUTORIAL_STEPS.size - 1) tutStep++
-                        else { tutActive = false; TutorialStore.setDone(ctx, true) }
+                        else { tutActive = false; TutorialStore.setDone(ctx, true); toggle() }  // son: gerçek bağlan
                     },
                     onSkip = { tutActive = false; TutorialStore.setDone(ctx, true) }
                 )
