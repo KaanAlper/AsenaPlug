@@ -1,10 +1,10 @@
 <!-- Adaptive icon foreground: 108dp tuval. gravity=fill -> bitmap inset bounds'a ölçeklenir.
-     inset 22dp -> logo ~64dp: Android resmi 66dp GÜVENLİ ALAN sınırı altında kalır (fazlası
-     maskeli görüntü alanında KIRPILIR). MIUI foreground'u ayrıca zoom'ladığı için 66 yerine
-     64dp seçildi -> MIUI'de bile kırpılmaz. Opak zemin sayesinde bu boyut "küçük" görünmez. -->
+     inset 17dp -> logo ~74dp: squircle/rounded-square (MIUI/Pixel) görünür alanına sığar.
+     MIUI'de 84dp kırpıldı, 64dp küçük kaldı -> 74dp ikisinin arası, kırpılmadan belirgin.
+     (Kurt şekli köşeleri doldurmaz, o yüzden 66dp güvenli-alanı biraz aşabiliyor.) -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:insetLeft="22dp" android:insetTop="22dp"
-    android:insetRight="22dp" android:insetBottom="22dp">
+    android:insetLeft="17dp" android:insetTop="17dp"
+    android:insetRight="17dp" android:insetBottom="17dp">
     <bitmap
         android:src="@drawable/asena_logo"
         android:gravity="fill" />
