@@ -160,7 +160,7 @@ AsenaPlug is also a native Android app (Kotlin + Jetpack Compose, Go/`usque` cor
 - **HTTP/2 & HTTP/3**, live speed test (tunnel vs direct), persistent foreground connection, Turkish/English, light/dark themes, 6 accent colors, first‑run guided tour.
 
 **Get it**
-- **Google Play** — closed testing (Alpha) for now; public release after the required 14‑day closed test.
+- **[Google Play](https://play.google.com/store/apps/details?id=com.kaanalper.asenaplug)** — currently closed testing (Alpha); public release after the required 14‑day closed test.
 - **APK (sideload)** — grab `AsenaPlug.apk` from the latest [`android-v*` release](https://github.com/KaanAlper/AsenaPlug/releases).
 
 Build from source: see [`mobile/androidapp/BUILD.md`](mobile/androidapp/BUILD.md). Package id: `com.kaanalper.asenaplug`.
@@ -344,7 +344,7 @@ AsenaPlug artık native bir Android uygulaması da (Kotlin + Jetpack Compose, Go
 - **HTTP/2 & HTTP/3**, canlı hız testi (tünel vs direkt), kalıcı foreground bağlantı, Türkçe/İngilizce, açık/koyu tema, 6 aksan rengi, ilk açılış tanıtım turu.
 
 **Nasıl edinilir**
-- **Google Play** — şimdilik kapalı test (Alpha); zorunlu 14 günlük kapalı testten sonra herkese açık.
+- **[Google Play](https://play.google.com/store/apps/details?id=com.kaanalper.asenaplug)** — şimdilik kapalı test (Alpha); zorunlu 14 günlük kapalı testten sonra herkese açık.
 - **APK (sideload)** — en son [`android-v*` sürümünden](https://github.com/KaanAlper/AsenaPlug/releases) `AsenaPlug.apk` indir.
 
 Kaynaktan derleme: [`mobile/androidapp/BUILD.md`](mobile/androidapp/BUILD.md). Paket kimliği: `com.kaanalper.asenaplug`.
