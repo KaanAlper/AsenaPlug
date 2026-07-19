@@ -148,7 +148,7 @@ func main() {
 	addRule("block-all", 1, wf.ActionBlock, nil)
 
 	fmt.Println("asena-killswitch: active (dynamic WFP session — filters auto-remove on exit)")
-
+    fmt.Println("ok")
 	// Süreç yaşadıkça filtreler duruyor. Ölünce (tray taskkill / çökme) OTOMATİK
 	// silinir; ayrıca temiz sinyalde de açıkça kapatırız.
 	sig := make(chan os.Signal, 1)
