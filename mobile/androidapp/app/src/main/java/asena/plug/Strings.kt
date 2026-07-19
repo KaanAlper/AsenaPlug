@@ -24,6 +24,7 @@ data class Strings(
     val settingsTitle: String, val transport: String, val scope: String, val theme: String, val color: String, val language: String,
     val system: String, val dark: String, val light: String, val onlyBlacklist: String, val everything: String,
     val connectOnBoot: String, val connectOnBootDesc: String, val version: String,
+    val tutSkip: String, val tutTapHint: String, val tutReplay: String, val tutorial: List<Pair<String, String>>,
 )
 
 private val TR = Strings(
@@ -39,6 +40,15 @@ private val TR = Strings(
     settingsTitle = "Mod & Ayarlar", transport = "Taşıma", scope = "Kapsam", theme = "Tema", color = "Renk", language = "Dil",
     system = "Sistem", dark = "Koyu", light = "Açık", onlyBlacklist = "Sadece blacklist", everything = "Her şey",
     connectOnBoot = "Açılışta bağlan", connectOnBootDesc = "Telefon açılınca otomatik", version = "Sürüm 0.1 · PoC",
+    tutSkip = "Atla", tutTapHint = "vurgulanan yere dokun", tutReplay = "Turu tekrar göster",
+    tutorial = listOf(
+        "Tünelleme yöntemi" to "HTTP/2 sağlam, HTTP/3 daha hızlı. Türkiye'de HTTP/2 önerilir.",
+        "Kapsam" to "Her şey: tüm trafik tünelde. Sadece blacklist: yalnızca listendekiler.",
+        "Site ekle" to "+ ile yasaklı alan adı ekle (örn. discord.com).",
+        "Dosyadan içe aktar" to "Hazır bir .txt listesini buradan yükle.",
+        "Hız testi" to "⟳ ile hızını ölç (bağlıyken tünel, kapalıyken düz hız).",
+        "Bağlan" to "Dokun ve korumaya başla. Tur burada biter.",
+    ),
 )
 
 private val EN = Strings(
@@ -54,6 +64,15 @@ private val EN = Strings(
     settingsTitle = "Mode & Settings", transport = "Transport", scope = "Scope", theme = "Theme", color = "Color", language = "Language",
     system = "System", dark = "Dark", light = "Light", onlyBlacklist = "Blacklist only", everything = "Everything",
     connectOnBoot = "Connect on boot", connectOnBootDesc = "Auto-start when phone boots", version = "Version 0.1 · PoC",
+    tutSkip = "Skip", tutTapHint = "tap the highlighted area", tutReplay = "Replay tour",
+    tutorial = listOf(
+        "Transport" to "HTTP/2 is robust, HTTP/3 is faster. HTTP/2 recommended in Turkey.",
+        "Scope" to "Everything: all traffic tunneled. Blacklist only: just your list.",
+        "Add site" to "Use + to add a blocked domain (e.g. discord.com).",
+        "Import from file" to "Load a ready .txt list from here.",
+        "Speed test" to "Measure speed with ⟳ (tunnel when on, direct when off).",
+        "Connect" to "Tap and get protected. The tour ends here.",
+    ),
 )
 
 fun stringsFor(lang: Lang, systemIsTr: Boolean): Strings = when (lang) {

@@ -110,6 +110,7 @@ class MainActivity : ComponentActivity() {
         ConfigStore.load(this)
         LangStore.load(this)
         SettingsStore.load(this)
+        TutorialStore.load(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent { AsenaApp() }
     }
@@ -164,6 +165,16 @@ private fun AppContent() {
     var regError by remember { mutableStateOf<String?>(null) }
     val ctx = LocalContext.current
 
+    // tutorial (ilk açılış, kayıt sonrası)
+    val tutDone by TutorialStore.done.collectAsState()
+    val tutorial = remember { TutorialController() }
+    var tutActive by remember { mutableStateOf(false) }
+    var tutStep by remember { mutableIntStateOf(0) }
+    LaunchedEffect(cfg, tutDone) {
+        if (cfg != null && !tutDone && !tutActive) { tutStep = 0; tutActive = true }
+    }
+    val effTab = if (tutActive) TUTORIAL_STEPS[tutStep].first else tab
+
     val doRegister: () -> Unit = {
         registering = true; regError = null
         Thread {
@@ -190,25 +201,43 @@ private fun AppContent() {
         }
     }
 
-    Box(
-        Modifier.fillMaxSize().background(p.bg).drawBehind {
-            drawRect(Brush.radialGradient(listOf(p.accent.copy(alpha = .13f), Color.Transparent),
-                center = Offset(size.width * .82f, -size.height * .04f), radius = size.width * .95f))
-            drawRect(Brush.radialGradient(listOf(p.steel.copy(alpha = .07f), Color.Transparent),
-                center = Offset(size.width * .06f, size.height * .05f), radius = size.width * .7f))
-        }
-    ) {
-        Column(Modifier.fillMaxSize().systemBarsPadding()) {
-            AppBar()
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                when (tab) {
-                    0 -> if (cfg == null) OnboardingScreen(registering, regError, doRegister)
-                    else ConnectScreen(status, toggle)
-                    1 -> SitesScreen()
-                    else -> SettingsScreen()
-                }
+    CompositionLocalProvider(LocalTutorial provides tutorial) {
+        Box(
+            Modifier.fillMaxSize().background(p.bg).drawBehind {
+                drawRect(Brush.radialGradient(listOf(p.accent.copy(alpha = .13f), Color.Transparent),
+                    center = Offset(size.width * .82f, -size.height * .04f), radius = size.width * .95f))
+                drawRect(Brush.radialGradient(listOf(p.steel.copy(alpha = .07f), Color.Transparent),
+                    center = Offset(size.width * .06f, size.height * .05f), radius = size.width * .7f))
             }
-            BottomNav(tab) { tab = it }
+        ) {
+            Column(Modifier.fillMaxSize().systemBarsPadding()) {
+                AppBar()
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when (effTab) {
+                        0 -> if (cfg == null) OnboardingScreen(registering, regError, doRegister)
+                        else ConnectScreen(status, toggle)
+                        1 -> SitesScreen()
+                        else -> SettingsScreen()
+                    }
+                }
+                BottomNav(effTab) { if (!tutActive) tab = it }
+            }
+
+            // spotlight tutorial overlay
+            if (tutActive) {
+                val (_, key) = TUTORIAL_STEPS[tutStep]
+                val step = s.tutorial.getOrElse(tutStep) { "" to "" }
+                TutorialOverlay(
+                    target = tutorial.targets[key], title = step.first, desc = step.second,
+                    stepIndex = tutStep, stepCount = TUTORIAL_STEPS.size,
+                    skipLabel = s.tutSkip, tapHint = s.tutTapHint, p = p,
+                    onNext = {
+                        if (tutStep < TUTORIAL_STEPS.size - 1) tutStep++
+                        else { tutActive = false; TutorialStore.setDone(ctx, true) }
+                    },
+                    onSkip = { tutActive = false; TutorialStore.setDone(ctx, true) }
+                )
+            }
         }
     }
 }
@@ -257,7 +286,7 @@ private fun ConnectScreen(status: TunnelStatus, onToggle: () -> Unit) {
 private fun Orb(status: TunnelStatus, onToggle: () -> Unit) {
     val p = LocalPalette.current
     val on = status == TunnelStatus.ON
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(232.dp)) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(232.dp).tutorialTarget("orb")) {
         // BAĞLIYKEN: dışa büyüyen sonar halkalar (animasyon). KAPALIYKEN: sabit halkalar (animasyon yok).
         if (on) {
             Ripples(232.dp, p.accent, 1f)
@@ -331,7 +360,7 @@ private fun InfoCard(status: TunnelStatus) {
     }
 
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(p.surface)
+        Modifier.fillMaxWidth().tutorialTarget("speed").clip(RoundedCornerShape(20.dp)).background(p.surface)
             .border(1.dp, p.line, RoundedCornerShape(20.dp)).padding(horizontal = 18.dp, vertical = 4.dp)
     ) {
         // başlık: HIZ (· tünel / · direkt) + ⟳ (ölçerken döner)
@@ -500,7 +529,7 @@ private fun SitesScreen() {
 
             // içe aktar = DOSYA SEÇ
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(p.accent.copy(alpha = .13f))
+                Modifier.fillMaxWidth().tutorialTarget("import").clip(RoundedCornerShape(14.dp)).background(p.accent.copy(alpha = .13f))
                     .border(1.dp, p.accent.copy(alpha = .34f), RoundedCornerShape(14.dp))
                     .clickable { picker.launch(arrayOf("text/plain", "text/*", "application/octet-stream")) }
                     .padding(horizontal = 14.dp, vertical = 13.dp),
@@ -543,7 +572,7 @@ private fun SitesScreen() {
 
         // FAB (+) = TEK site text girişi
         Box(
-            Modifier.align(Alignment.BottomEnd).padding(20.dp).size(56.dp)
+            Modifier.align(Alignment.BottomEnd).padding(20.dp).size(56.dp).tutorialTarget("fab")
                 .clip(RoundedCornerShape(18.dp)).background(p.accent).clickable { showAdd = true },
             contentAlignment = Alignment.Center
         ) { Icon(Icons.Filled.Add, null, Modifier.size(28.dp), tint = p.onAccent) }
@@ -671,10 +700,10 @@ private fun SettingsScreen() {
         Column(Modifier.weight(1f).verticalScroll(scroll).padding(horizontal = 22.dp)) {
             Spacer(Modifier.height(18.dp))
             SegLabel(s.transport)
-            Segmented(listOf("HTTP/2", "HTTP/3"), 0, null)
+            Box(Modifier.fillMaxWidth().tutorialTarget("transport")) { Segmented(listOf("HTTP/2", "HTTP/3"), 0, null) }
             Spacer(Modifier.height(18.dp))
             SegLabel(s.scope)
-            Segmented(listOf(s.onlyBlacklist, s.everything), 1, null)
+            Box(Modifier.fillMaxWidth().tutorialTarget("scope")) { Segmented(listOf(s.onlyBlacklist, s.everything), 1, null) }
 
             Spacer(Modifier.height(18.dp))
             SegLabel(s.theme)
@@ -705,6 +734,13 @@ private fun SettingsScreen() {
 
             Spacer(Modifier.height(22.dp))
             ToggleRow(s.connectOnBoot, s.connectOnBootDesc, boot) { SettingsStore.setConnectOnBoot(ctx, it) }
+
+            Spacer(Modifier.height(16.dp))
+            Text(
+                s.tutReplay, color = p.accentText, fontFamily = mono, fontSize = 13.sp,
+                modifier = Modifier.clip(RoundedCornerShape(9.dp))
+                    .clickable { TutorialStore.setDone(ctx, false) }.padding(vertical = 8.dp, horizontal = 2.dp)
+            )
             Spacer(Modifier.height(20.dp))
         }
 
