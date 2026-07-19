@@ -1,7 +1,8 @@
-name: Android — APK + AAB Release
+name: Android — APK Release + AAB (private)
 
-# Her mobile/androidapp değişiminde APK + AAB üretir ve GitHub RELEASE'e DİREKT dosya
-# (AsenaPlug.apk / AsenaPlug.aab) olarak yükler — artifact ZIP'i yok, tek tık indir.
+# Her mobile/androidapp değişiminde APK + AAB üretir:
+#  - APK  -> GitHub RELEASE'e DİREKT dosya (AsenaPlug.apk, zip yok, herkes tek tık indirir)
+#  - AAB  -> PRIVATE artifact (Play Store bundle; sadece repo erişimi olan indirir, public DEĞİL)
 # Aar repoda hazır (app/libs) -> gomobile/NDK GEREKMEZ, sadece gradle.
 # Release 'android-v...' tag'i + "AsenaPlug Android" başlığı + PRERELEASE:
 #   Windows updater /releases/latest'i kullanıyor; prerelease oraya GİRMEZ ->
@@ -46,20 +47,22 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug bundleDebug --no-daemon --stacktrace
 
-      - name: Çıktıları temiz adlandır (AsenaPlug.apk / AsenaPlug.aab)
-        run: |
-          cp app/build/outputs/apk/debug/app-debug.apk AsenaPlug.apk
-          cp app/build/outputs/bundle/debug/*.aab AsenaPlug.aab
-          ls -lh AsenaPlug.apk AsenaPlug.aab
+      - name: APK'yı temiz adlandır (AsenaPlug.apk)
+        run: cp app/build/outputs/apk/debug/app-debug.apk AsenaPlug.apk
 
-      - name: Android Release (APK + AAB direkt asset)
+      - name: Android Release (SADECE APK — public, direkt indir)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-v1.0.${{ github.run_number }}
           name: AsenaPlug Android v1.0.${{ github.run_number }}
           prerelease: true            # /releases/latest'e girmez -> Windows updater güvende
           make_latest: "false"
-          files: |
-            mobile/androidapp/AsenaPlug.apk
-            mobile/androidapp/AsenaPlug.aab
+          files: mobile/androidapp/AsenaPlug.apk
           generate_release_notes: true
+
+      - name: AAB — PRIVATE artifact (Play Store; sadece repo erişimi olan indirir)
+        uses: actions/upload-artifact@v4
+        with:
+          name: asenaplug-aab-private
+          path: mobile/androidapp/app/build/outputs/bundle/debug/*.aab
+          if-no-files-found: error
