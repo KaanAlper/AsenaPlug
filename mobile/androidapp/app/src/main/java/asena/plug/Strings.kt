@@ -13,7 +13,7 @@ data class Strings(
     val protected: String, val connecting: String, val off: String,
     val subScope: String, val subHandshake: String, val subTapToConnect: String,
     val speed: String, val download: String, val upload: String, val session: String, val siteUnit: String, val noLeak: String,
-    val exit: String, val cloudflare: String,
+    val exit: String, val cloudflare: String, val viaTunnel: String, val viaDirect: String,
     // onboarding
     val start: String, val onboardDesc: String, val creatingAccount: String,
     // siteler
@@ -31,7 +31,7 @@ private val TR = Strings(
     protected = "Korumadasın", connecting = "Bağlanıyor…", off = "Kapalı",
     subScope = "HTTP/2 · Her şey", subHandshake = "MASQUE el sıkışıyor", subTapToConnect = "Dokun ve bağlan",
     speed = "Hız", download = "İndirme", upload = "Yükleme", session = "Oturum", siteUnit = "site", noLeak = "sızıntı yok",
-    exit = "Çıkış", cloudflare = "Cloudflare",
+    exit = "Çıkış", cloudflare = "Cloudflare", viaTunnel = "tünel", viaDirect = "direkt",
     start = "Başla", onboardDesc = "Başlamak için anonim bir Cloudflare WARP hesabı oluşturulur. Kişisel bilgi gerekmez — sadece bir cihaz anahtarı.", creatingAccount = "Hesabın oluşturuluyor…",
     sitesTitle = "Siteler", searchHint = "alan ara…", importFile = "Listeden içe aktar", importHint = ".txt dosyası",
     emptyList = "Henüz site yok — + ile ekle", noMatch = "Eşleşme yok", inList = "listede",
@@ -46,7 +46,7 @@ private val EN = Strings(
     protected = "Protected", connecting = "Connecting…", off = "Off",
     subScope = "HTTP/2 · Everything", subHandshake = "MASQUE handshaking", subTapToConnect = "Tap to connect",
     speed = "Speed", download = "Download", upload = "Upload", session = "Session", siteUnit = "sites", noLeak = "no leaks",
-    exit = "Exit", cloudflare = "Cloudflare",
+    exit = "Exit", cloudflare = "Cloudflare", viaTunnel = "tunnel", viaDirect = "direct",
     start = "Start", onboardDesc = "To begin, an anonymous Cloudflare WARP account is created. No personal info — just a device key.", creatingAccount = "Creating your account…",
     sitesTitle = "Sites", searchHint = "search domain…", importFile = "Import from list", importHint = ".txt file",
     emptyList = "No sites yet — add with +", noMatch = "No match", inList = "listed",

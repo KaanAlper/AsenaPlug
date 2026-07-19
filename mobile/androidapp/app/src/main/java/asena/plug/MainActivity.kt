@@ -334,12 +334,18 @@ private fun InfoCard(status: TunnelStatus) {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(p.surface)
             .border(1.dp, p.line, RoundedCornerShape(20.dp)).padding(horizontal = 18.dp, vertical = 4.dp)
     ) {
-        // başlık: HIZ + ⟳ (ölçerken döner)
+        // başlık: HIZ (· tünel / · direkt) + ⟳ (ölçerken döner)
         Row(
             Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(s.speed.uppercase(), color = p.faint, fontFamily = mono, fontSize = 11.sp, letterSpacing = 1.5.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(s.speed.uppercase(), color = p.faint, fontFamily = mono, fontSize = 11.sp, letterSpacing = 1.5.sp)
+                Spacer(Modifier.width(8.dp))
+                val on = status == TunnelStatus.ON
+                Text("· ${if (on) s.viaTunnel else s.viaDirect}",
+                    color = if (on) p.good else p.faint, fontFamily = mono, fontSize = 10.sp)
+            }
             Icon(
                 Icons.Filled.Refresh, "yenile",
                 Modifier.size(19.dp).rotate(if (measuring) spin else 0f)
@@ -374,22 +380,23 @@ private fun StatRow(label: String, value: String, unit: String, valueColor: Colo
 /** Knight Rider: ölçüm bitince sayının üzerinden soldan sağa beyaz parlama geçer. */
 @Composable
 private fun Modifier.knightSweep(trigger: Int): Modifier {
-    val anim = remember { Animatable(1.8f) }   // 1.8 = sağda, görünmez (boşta)
+    val anim = remember { Animatable(1.5f) }   // 1.5 = sağda, görünmez (boşta)
     LaunchedEffect(trigger) {
-        if (trigger > 0) { anim.snapTo(-0.4f); anim.animateTo(1.8f, tween(780, easing = FastOutSlowInEasing)) }
+        if (trigger > 0) { anim.snapTo(-0.35f); anim.animateTo(1.5f, tween(1500, easing = FastOutSlowInEasing)) }
     }
     return drawWithContent {
         drawContent()
         val w = size.width
-        val band = w * 0.85f
+        val band = w * 0.62f
         val cx = anim.value * w
+        // font pikselleri üzerinde yumuşak beyaz parlama (SrcAtop = sadece harflerde)
         drawRect(
             brush = Brush.horizontalGradient(
-                0.0f to Color.Transparent,
-                0.44f to Color.Transparent,
-                0.5f to Color.White.copy(alpha = 0.95f),
-                0.56f to Color.Transparent,
-                1.0f to Color.Transparent,
+                0.00f to Color.Transparent,
+                0.38f to Color.White.copy(alpha = 0.0f),
+                0.50f to Color.White.copy(alpha = 0.92f),
+                0.62f to Color.White.copy(alpha = 0.0f),
+                1.00f to Color.Transparent,
                 startX = cx - band, endX = cx + band
             ),
             blendMode = BlendMode.SrcAtop

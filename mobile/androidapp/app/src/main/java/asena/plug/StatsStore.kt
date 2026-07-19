@@ -30,11 +30,10 @@ object StatsStore {
         downloadMbps.value = null
         uploadMbps.value = null
         Thread {
-            // download + upload PARALEL (aynı anda ikisi de canlı tırmanır)
-            val dt = Thread { runCatching { testDownload() }.onFailure { Log.e("Stats", "download: ${it.message}", it) } }
-            val ut = Thread { runCatching { testUpload() }.onFailure { Log.e("Stats", "upload: ${it.message}", it) } }
-            dt.start(); ut.start()
-            dt.join(); ut.join()
+            // SIRALI: önce download tam kapasite, sonra upload (fast.com gibi). Paralel yapınca
+            // yavaş tünelde upload, download'ı aç bırakıp gerçek dışı düşük değer veriyordu.
+            runCatching { testDownload() }.onFailure { Log.e("Stats", "download: ${it.message}", it) }
+            runCatching { testUpload() }.onFailure { Log.e("Stats", "upload: ${it.message}", it) }
             measuring.value = false
             running = false
         }.start()
