@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AsenaPlug — Gizlilik Politikası / Privacy Policy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0E1117; --surface:#161B25; --line:#2A3240; --text:#E9ECF3; --muted:#8B94A6; --faint:#5A6476;
+    --gold:#F5B841; --gold-2:#FFD27A; --gold-soft:rgba(245,184,65,.12); --gold-line:rgba(245,184,65,.32);
+    --sans:'Sora',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#EAEDF3; --surface:#fff; --line:#DCE1EA; --text:#151A23; --muted:#5A6476; --faint:#8A94A4;
+      --gold:#B67C14; --gold-soft:rgba(182,124,20,.10); --gold-line:rgba(182,124,20,.28); }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.65;
+    -webkit-font-smoothing:antialiased}
+  body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(60% 40% at 82% -4%, var(--gold-soft), transparent 60%);}
+  .wrap{position:relative;z-index:1;max-width:760px;margin:0 auto;padding:64px 24px 90px}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+  .logo{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;
+    background:radial-gradient(circle at 50% 35%,var(--gold-2),var(--gold));color:#120C02;font-weight:800;font-size:20px}
+  h1{font-size:clamp(1.9rem,5vw,2.6rem);font-weight:800;letter-spacing:-.02em;margin:.2em 0 .1em}
+  .brand{font-weight:800;font-size:20px;letter-spacing:-.01em}
+  .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold)}
+  .updated{font-family:var(--mono);font-size:12px;color:var(--faint);margin-bottom:34px}
+  h2{font-size:1.25rem;font-weight:700;margin:38px 0 10px;letter-spacing:-.01em}
+  p{color:var(--muted);margin:0 0 12px}
+  p strong,li strong{color:var(--text);font-weight:600}
+  ul{color:var(--muted);padding-left:20px;margin:0 0 12px}
+  li{margin:6px 0}
+  a{color:var(--gold);text-decoration:none;border-bottom:1px solid var(--gold-line)}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 22px;margin:16px 0}
+  .card.good{border-color:var(--gold-line);background:var(--gold-soft)}
+  .lang-sep{border:0;border-top:1px solid var(--line);margin:56px 0 40px}
+  .foot{color:var(--faint);font-family:var(--mono);font-size:12px;margin-top:50px;text-align:center}
+  code{font-family:var(--mono);font-size:.9em;color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">A</div>
+    <div>
+      <div class="kicker">AsenaPlug</div>
+      <div class="brand">Gizlilik Politikası</div>
+    </div>
+  </header>
+  <h1>Gizliliğin, tasarım gereği.</h1>
+  <div class="updated">Son güncelleme: 19 Temmuz 2026</div>
+
+  <div class="card good">
+    <p style="margin:0"><strong>Kısaca:</strong> AsenaPlug kişisel veri toplamaz, seni izlemez,
+    gezinti geçmişini kaydetmez. Hesabın anonimdir; site listen yalnızca telefonunda durur.</p>
+  </div>
+
+  <h2>AsenaPlug nedir</h2>
+  <p>AsenaPlug, trafiği Cloudflare MASQUE (WARP) altyapısı üzerinden yönlendirerek DPI/DNS tabanlı
+  engellemeleri aşan bir VPN uygulamasıdır. Uygulama açık kaynak ilkelerine dayanır ve reklam,
+  analitik veya izleme SDK'sı içermez.</p>
+
+  <h2>Topladığımız veriler</h2>
+  <p>Sizi tanımlayan <strong>hiçbir kişisel veri toplamıyoruz.</strong> Uygulama şunları kullanır:</p>
+  <ul>
+    <li><strong>Anonim WARP hesabı:</strong> İlk açılışta cihazınızda anonim bir Cloudflare WARP
+      cihaz anahtarı oluşturulur. Ad, e-posta, telefon veya kimlik bilgisi <strong>istenmez</strong>.
+      Bu anahtar yalnızca cihazınızda saklanır.</li>
+    <li><strong>Site listesi:</strong> Tünelden geçirmek istediğiniz alan adları yalnızca cihazınızın
+      yerel depolamasında (SharedPreferences) tutulur; sunucularımıza <strong>gönderilmez</strong>.</li>
+    <li><strong>Ayarlar:</strong> Tema, dil ve tercih seçimleri yalnızca cihazınızda saklanır.</li>
+  </ul>
+
+  <h2>Trafiğiniz</h2>
+  <p>VPN trafiğinizi <strong>kaydetmiyor, incelemiyor veya üçüncü taraflarla paylaşmıyoruz.</strong>
+  Hız ölçümü (isteğe bağlı ⟳) yalnızca siz başlattığınızda çalışır ve sonucu cihazınızda gösterilir,
+  saklanmaz.</p>
+
+  <h2>İzinler</h2>
+  <ul>
+    <li><strong>VPN (BIND_VPN_SERVICE):</strong> Tüneli kurmak için — VPN'in temel işlevi.</li>
+    <li><strong>İnternet:</strong> Cloudflare uç noktasına bağlanmak için.</li>
+    <li><strong>Açılışta başlat (isteğe bağlı):</strong> Yalnızca siz "Açılışta bağlan" seçeneğini
+      etkinleştirirseniz kullanılır.</li>
+  </ul>
+
+  <h2>Üçüncü taraflar</h2>
+  <p>Uygulama, tünel için <strong>Cloudflare WARP</strong> altyapısını kullanır. Cloudflare'in
+  bağlantı verilerini işleyişi kendi gizlilik politikasına tabidir:
+  <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Cloudflare Gizlilik Politikası</a>.
+  Bunun dışında hiçbir üçüncü taraf servise veri gönderilmez.</p>
+
+  <h2>Çocuklar</h2>
+  <p>Uygulama 13 yaş altındaki çocuklara yönelik değildir ve onlardan bilerek veri toplamaz.</p>
+
+  <h2>Değişiklikler</h2>
+  <p>Bu politikayı zaman zaman güncelleyebiliriz. Önemli değişikliklerde bu sayfadaki tarih yenilenir.</p>
+
+  <h2>İletişim</h2>
+  <p>Sorularınız için: <a href="mailto:muammer@clonifylabs.com">muammer@clonifylabs.com</a></p>
+
+  <hr class="lang-sep">
+
+  <!-- ENGLISH -->
+  <div class="kicker">AsenaPlug · English</div>
+  <h1 style="margin-top:.1em">Privacy, by design.</h1>
+  <div class="updated">Last updated: July 19, 2026</div>
+
+  <div class="card good">
+    <p style="margin:0"><strong>In short:</strong> AsenaPlug collects no personal data, does not track
+    you, and keeps no browsing history. Your account is anonymous; your site list stays only on your phone.</p>
+  </div>
+
+  <h2>What AsenaPlug is</h2>
+  <p>AsenaPlug is a VPN app that routes traffic over Cloudflare MASQUE (WARP) to bypass DPI/DNS-based
+  blocking. It contains no ads, analytics, or tracking SDKs.</p>
+
+  <h2>Data we collect</h2>
+  <p>We collect <strong>no personally identifiable data.</strong> The app uses:</p>
+  <ul>
+    <li><strong>Anonymous WARP account:</strong> On first launch, an anonymous Cloudflare WARP device
+      key is created on your device. No name, email, phone, or identity is requested. It is stored only
+      on your device.</li>
+    <li><strong>Site list:</strong> Domains you choose to tunnel are stored only in your device's local
+      storage; they are never sent to our servers.</li>
+    <li><strong>Preferences:</strong> Theme, language, and settings are stored only on your device.</li>
+  </ul>
+
+  <h2>Your traffic</h2>
+  <p>We do <strong>not log, inspect, or share</strong> your VPN traffic. The optional speed test (⟳)
+  runs only when you start it and its result is shown on your device, not stored.</p>
+
+  <h2>Permissions</h2>
+  <ul>
+    <li><strong>VPN (BIND_VPN_SERVICE):</strong> to establish the tunnel — core VPN function.</li>
+    <li><strong>Internet:</strong> to reach the Cloudflare endpoint.</li>
+    <li><strong>Start on boot (optional):</strong> used only if you enable "Connect on boot".</li>
+  </ul>
+
+  <h2>Third parties</h2>
+  <p>The app uses <strong>Cloudflare WARP</strong> for the tunnel. Cloudflare's handling of connection
+  data is governed by its own policy:
+  <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Cloudflare Privacy Policy</a>.
+  No data is sent to any other third party.</p>
+
+  <h2>Children</h2>
+  <p>The app is not directed to children under 13 and does not knowingly collect data from them.</p>
+
+  <h2>Changes</h2>
+  <p>We may update this policy from time to time. The date above is refreshed on material changes.</p>
+
+  <h2>Contact</h2>
+  <p>Questions: <a href="mailto:muammer@clonifylabs.com">muammer@clonifylabs.com</a></p>
+
+  <div class="foot">AsenaPlug · Cloudflare MASQUE tabanlı sansür-bypass · bozkurt</div>
+</div>
+</body>
+</html>

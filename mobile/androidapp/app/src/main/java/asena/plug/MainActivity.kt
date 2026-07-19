@@ -3,6 +3,7 @@ package asena.plug
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.net.VpnService
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -45,8 +46,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -255,18 +258,20 @@ private fun Orb(status: TunnelStatus, onToggle: () -> Unit) {
     val p = LocalPalette.current
     val on = status == TunnelStatus.ON
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(232.dp)) {
-        // en dış: dışa doğru kademeli büyüyen halkalar (sonar) — sürekli animasyon
-        Ripples(232.dp, p.accent, if (on) 1f else 0.4f)
-        // bloom
+        // BAĞLIYKEN: dışa büyüyen sonar halkalar (animasyon). KAPALIYKEN: sabit halkalar (animasyon yok).
+        if (on) {
+            Ripples(232.dp, p.accent, 1f)
+        } else {
+            Box(Modifier.size(200.dp).border(1.5.dp, p.line, CircleShape))
+            Box(Modifier.size(176.dp).border(1.dp, p.line.copy(alpha = .6f), CircleShape))
+        }
+        // bloom (çekirdek arkası ışıma)
         Box(Modifier.size(200.dp).clip(CircleShape).background(
             Brush.radialGradient(
                 if (on) listOf(p.accent.copy(alpha = .22f), p.accent.copy(alpha = .06f), Color.Transparent)
                 else listOf(p.text.copy(alpha = .02f), Color.Transparent)
             )
         ))
-        // halkalar
-        Box(Modifier.size(200.dp).border(1.5.dp, if (on) p.accent.copy(alpha = .30f) else p.line, CircleShape))
-        Box(Modifier.size(176.dp).border(1.dp, if (on) p.accent.copy(alpha = .18f) else p.line.copy(alpha = .6f), CircleShape))
         if (status == TunnelStatus.CONNECTING) {
             CircularProgressIndicator(Modifier.size(164.dp), color = p.accent, strokeWidth = 2.dp)
         }
@@ -319,6 +324,12 @@ private fun InfoCard(status: TunnelStatus) {
 
     fun fmt(v: Double?) = v?.let { String.format(java.util.Locale.US, "%.1f", it) } ?: "—"
 
+    // ölçüm bitince Knight Rider parlaması tetikle
+    var sweepKey by remember { mutableIntStateOf(0) }
+    LaunchedEffect(measuring) {
+        if (!measuring && (dl != null || ul != null)) sweepKey++
+    }
+
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(p.surface)
             .border(1.dp, p.line, RoundedCornerShape(20.dp)).padding(horizontal = 18.dp, vertical = 4.dp)
@@ -336,16 +347,16 @@ private fun InfoCard(status: TunnelStatus) {
                 tint = p.accentText
             )
         }
-        StatRow(s.download, fmt(dl), "Mb/s", p.good)
+        StatRow(s.download, fmt(dl), "Mb/s", p.good, sweepKey)
         Divider()
-        StatRow(s.upload, fmt(ul), "Mb/s", p.steel)
+        StatRow(s.upload, fmt(ul), "Mb/s", p.steel, sweepKey)
         Divider()
         SessionRow()
     }
 }
 
 @Composable
-private fun StatRow(label: String, value: String, unit: String, valueColor: Color) {
+private fun StatRow(label: String, value: String, unit: String, valueColor: Color, sweepKey: Int) {
     val p = LocalPalette.current
     Row(
         Modifier.fillMaxWidth().padding(vertical = 13.dp),
@@ -353,9 +364,36 @@ private fun StatRow(label: String, value: String, unit: String, valueColor: Colo
     ) {
         Text(label.uppercase(), color = p.faint, fontFamily = mono, fontSize = 11.sp, letterSpacing = 1.5.sp)
         Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, color = valueColor, fontFamily = mono, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(value, color = valueColor, fontFamily = mono, fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.knightSweep(sweepKey))
             Text(" $unit", color = p.muted, fontFamily = mono, fontSize = 11.sp)
         }
+    }
+}
+
+/** Knight Rider: ölçüm bitince sayının üzerinden soldan sağa beyaz parlama geçer. */
+@Composable
+private fun Modifier.knightSweep(trigger: Int): Modifier {
+    val anim = remember { Animatable(1.8f) }   // 1.8 = sağda, görünmez (boşta)
+    LaunchedEffect(trigger) {
+        if (trigger > 0) { anim.snapTo(-0.4f); anim.animateTo(1.8f, tween(780, easing = FastOutSlowInEasing)) }
+    }
+    return drawWithContent {
+        drawContent()
+        val w = size.width
+        val band = w * 0.85f
+        val cx = anim.value * w
+        drawRect(
+            brush = Brush.horizontalGradient(
+                0.0f to Color.Transparent,
+                0.44f to Color.Transparent,
+                0.5f to Color.White.copy(alpha = 0.95f),
+                0.56f to Color.Transparent,
+                1.0f to Color.Transparent,
+                startX = cx - band, endX = cx + band
+            ),
+            blendMode = BlendMode.SrcAtop
+        )
     }
 }
 
@@ -364,14 +402,17 @@ private fun SessionRow() {
     val p = LocalPalette.current
     val s = LocalStrings.current
     val domains by DomainStore.domains.collectAsState()
+    val status by TunnelState.status.collectAsState()
     Row(
         Modifier.fillMaxWidth().padding(vertical = 13.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
     ) {
         Text(s.session.uppercase(), color = p.faint, fontFamily = mono, fontSize = 11.sp, letterSpacing = 1.5.sp)
         Row {
-            Text("${domains.size} ${s.siteUnit} · ", color = p.text, fontFamily = mono, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            Text(s.noLeak, color = p.good, fontFamily = mono, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text("${domains.size} ${s.siteUnit}", color = p.text, fontFamily = mono, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            if (status == TunnelStatus.ON) {
+                Text(" · ${s.cloudflare}", color = p.good, fontFamily = mono, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }
@@ -617,49 +658,63 @@ private fun SettingsScreen() {
     val accentIdx by ThemeStore.accentIndex.collectAsState()
     val lang by LangStore.lang.collectAsState()
     val boot by SettingsStore.connectOnBoot.collectAsState()
-    val scroll = androidx.compose.foundation.rememberScrollState()
+    val scroll = rememberScrollState()
 
-    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 22.dp)) {
-        Spacer(Modifier.height(18.dp))
-        SegLabel(s.transport)
-        Segmented(listOf("HTTP/2", "HTTP/3"), 0, null)
-        Spacer(Modifier.height(18.dp))
-        SegLabel(s.scope)
-        Segmented(listOf(s.onlyBlacklist, s.everything), 1, null)
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).verticalScroll(scroll).padding(horizontal = 22.dp)) {
+            Spacer(Modifier.height(18.dp))
+            SegLabel(s.transport)
+            Segmented(listOf("HTTP/2", "HTTP/3"), 0, null)
+            Spacer(Modifier.height(18.dp))
+            SegLabel(s.scope)
+            Segmented(listOf(s.onlyBlacklist, s.everything), 1, null)
 
-        Spacer(Modifier.height(18.dp))
-        SegLabel(s.theme)
-        Segmented(listOf(s.system, s.dark, s.light),
-            when (mode) { ThemeMode.SYSTEM -> 0; ThemeMode.DARK -> 1; ThemeMode.LIGHT -> 2 }) { i ->
-            ThemeStore.setMode(ctx, when (i) { 0 -> ThemeMode.SYSTEM; 1 -> ThemeMode.DARK; else -> ThemeMode.LIGHT })
-        }
-
-        Spacer(Modifier.height(18.dp))
-        SegLabel(s.language)
-        Segmented(listOf(s.system, "Türkçe", "English"),
-            when (lang) { Lang.SYSTEM -> 0; Lang.TR -> 1; Lang.EN -> 2 }) { i ->
-            LangStore.set(ctx, when (i) { 0 -> Lang.SYSTEM; 1 -> Lang.TR; else -> Lang.EN })
-        }
-
-        Spacer(Modifier.height(18.dp))
-        SegLabel(s.color)
-        Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
-            ACCENTS.forEachIndexed { i, a ->
-                val sel = i == accentIdx
-                Box(
-                    Modifier.padding(end = 14.dp).size(if (sel) 34.dp else 30.dp).clip(CircleShape).background(Color(a.c))
-                        .border(if (sel) 2.dp else 0.dp, if (sel) p.text else Color.Transparent, CircleShape)
-                        .clickable { ThemeStore.setAccent(ctx, i) }
-                )
+            Spacer(Modifier.height(18.dp))
+            SegLabel(s.theme)
+            Segmented(listOf(s.system, s.dark, s.light),
+                when (mode) { ThemeMode.SYSTEM -> 0; ThemeMode.DARK -> 1; ThemeMode.LIGHT -> 2 }) { i ->
+                ThemeStore.setMode(ctx, when (i) { 0 -> ThemeMode.SYSTEM; 1 -> ThemeMode.DARK; else -> ThemeMode.LIGHT })
             }
+
+            Spacer(Modifier.height(18.dp))
+            SegLabel(s.language)
+            Segmented(listOf(s.system, "Türkçe", "English"),
+                when (lang) { Lang.SYSTEM -> 0; Lang.TR -> 1; Lang.EN -> 2 }) { i ->
+                LangStore.set(ctx, when (i) { 0 -> Lang.SYSTEM; 1 -> Lang.TR; else -> Lang.EN })
+            }
+
+            Spacer(Modifier.height(18.dp))
+            SegLabel(s.color)
+            Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                ACCENTS.forEachIndexed { i, a ->
+                    val sel = i == accentIdx
+                    Box(
+                        Modifier.padding(end = 14.dp).size(if (sel) 34.dp else 30.dp).clip(CircleShape).background(Color(a.c))
+                            .border(if (sel) 2.dp else 0.dp, if (sel) p.text else Color.Transparent, CircleShape)
+                            .clickable { ThemeStore.setAccent(ctx, i) }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(22.dp))
+            ToggleRow(s.connectOnBoot, s.connectOnBootDesc, boot) { SettingsStore.setConnectOnBoot(ctx, it) }
+            Spacer(Modifier.height(20.dp))
         }
 
-        Spacer(Modifier.height(22.dp))
-        ToggleRow(s.connectOnBoot, s.connectOnBootDesc, boot) { SettingsStore.setConnectOnBoot(ctx, it) }
-
-        Spacer(Modifier.height(20.dp))
-        Text(s.version, color = p.faint, fontFamily = mono, fontSize = 11.sp)
-        Spacer(Modifier.height(30.dp))
+        // en alta yapışık: sürüm + GitHub logosu (repo'yu açar)
+        Row(
+            Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 6.dp, bottom = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(s.version, color = p.faint, fontFamily = mono, fontSize = 11.sp)
+            Icon(
+                painterResource(R.drawable.github), "GitHub",
+                Modifier.size(22.dp).clickable {
+                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/KaanAlper/AsenaPlug")))
+                },
+                tint = p.muted
+            )
+        }
     }
 }
 
