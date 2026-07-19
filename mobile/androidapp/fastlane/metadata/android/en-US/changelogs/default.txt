@@ -1,0 +1,5 @@
+First release 🐺
+• Private VPN over Cloudflare MASQUE (WARP)
+• "Everything" and "Selected sites" modes
+• HTTP/2 & HTTP/3, live speed test
+• No logs, no tracking — fully anonymous

@@ -1,0 +1,32 @@
+🐺 An open internet — privately.
+
+AsenaPlug is a privacy-first VPN that routes your traffic through a secure tunnel over Cloudflare's MASQUE (WARP) infrastructure. Reach a fast, secure and open internet without collecting any data that identifies you. No ads, no tracking, no clutter.
+
+🔒 REAL PRIVACY
+✓ No logs, no tracking, no browsing history
+✓ No name, email or phone required — your account is fully anonymous
+✓ Your anonymous key and site list stay only on your phone, never on a server
+✓ No ads, no analytics, no tracking SDKs
+
+⚡ FAST AND MODERN
+✓ Cloudflare's global MASQUE (HTTP/2 & HTTP/3) backbone — low latency
+✓ Smooth, stable connection
+✓ Optional live speed test: tunnel speed when on, direct speed when off
+✓ Stays alive in the background — the tunnel won't drop unless you want it to
+
+🎯 TWO MODES, YOUR CHOICE
+✓ Everything: all your traffic goes through the secure tunnel
+✓ Selected sites: only the domains you pick are tunneled; everything else stays direct and full-speed
+
+🎨 CLEAN AND SLEEK
+✓ Turkish and English — follows your system language automatically
+✓ Light/dark theme, dynamic color accent
+✓ One-tap connect; a short, smooth guided tour on first launch
+
+🛡️ HOW IT WORKS
+Your traffic is carried over Cloudflare's MASQUE (connect-ip) protocol through an encrypted tunnel. Cloudflare's handling of connection data is governed by its own privacy policy; no data is sent to any other third party.
+
+An open internet, without giving up your privacy — now in your pocket. 🐺
+
+Privacy Policy: https://kaanalper.github.io/AsenaPlug/privacy.html
+Contact: kaanalperkaraaslan@gmail.com

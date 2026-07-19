@@ -1,0 +1,5 @@
+İlk sürüm 🐺
+• Cloudflare MASQUE (WARP) tabanlı gizli VPN
+• "Her şey" ve "Seçili siteler" modları
+• HTTP/2 & HTTP/3, canlı hız testi
+• Kayıt yok, izleme yok — tamamen anonim

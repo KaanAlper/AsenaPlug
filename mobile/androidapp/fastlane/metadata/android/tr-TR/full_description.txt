@@ -1,0 +1,32 @@
+🐺 Özgür internet — gizli kalarak.
+
+AsenaPlug; trafiğini Cloudflare MASQUE (WARP) altyapısı üzerinden güvenli bir tünelden geçiren, gizlilik odaklı bir VPN'dir. Sizi tanımlayan hiçbir veri toplamadan hızlı, güvenli ve açık internete bağlanın. Reklam yok, iz yok, karmaşa yok.
+
+🔒 GERÇEK GİZLİLİK
+✓ Kayıt yok, izleme yok, gezinti geçmişi yok
+✓ Ad, e-posta veya telefon istenmez — hesabınız tamamen anonim
+✓ Anonim anahtarınız ve site listeniz yalnızca telefonunuzda kalır, sunucuya gitmez
+✓ Reklam yok, analitik yok, izleme SDK'sı yok
+
+⚡ HIZLI VE MODERN
+✓ Cloudflare'in küresel MASQUE (HTTP/2 & HTTP/3) omurgası — düşük gecikme
+✓ Akıcı, kararlı bağlantı
+✓ İsteğe bağlı canlı hız testi: bağlıyken tünel, kapalıyken doğrudan hızını gör
+✓ Arka planda kararlı: tünel siz istemeden düşmez
+
+🎯 SANA GÖRE İKİ MOD
+✓ Her şey: tüm trafiğin güvenli tünelden geçer
+✓ Seçili siteler: yalnızca belirlediğin alanlar tünelden, gerisi tam hızda doğrudan bağlanır
+
+🎨 SADE VE ŞIK
+✓ Türkçe ve İngilizce — sistem diline otomatik uyum
+✓ Açık/koyu tema, dinamik renk aksanı
+✓ Tek dokunuşla bağlan; ilk açılışta kısa, akıcı bir tanıtım turu
+
+🛡️ NASIL ÇALIŞIR
+Trafiğiniz Cloudflare'in MASQUE (connect-ip) protokolüyle şifreli bir tünelde taşınır. Cloudflare'in bağlantı verilerini işleyişi kendi gizlilik politikasına tabidir; bunun dışında hiçbir üçüncü tarafa veri gönderilmez.
+
+Gizliliğinizden ödün vermeden özgür internet — artık cebinizde. 🐺
+
+Gizlilik Politikası: https://kaanalper.github.io/AsenaPlug/privacy.html
+İletişim: kaanalperkaraaslan@gmail.com

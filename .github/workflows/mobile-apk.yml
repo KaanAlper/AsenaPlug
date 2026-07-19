@@ -15,7 +15,7 @@ on:
   push:
     paths:
       - 'mobile/androidapp/**'
-      - '!mobile/androidapp/store/**'   # Play listing asset'leri app'i etkilemez -> build tetikleme
+      - '!mobile/androidapp/fastlane/**'   # Play listing metadata app'i etkilemez -> build tetikleme
       - '.github/workflows/mobile-apk.yml'
   workflow_dispatch:
 
