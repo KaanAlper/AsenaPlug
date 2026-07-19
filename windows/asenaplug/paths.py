@@ -66,3 +66,4 @@ TASKS = {
     "route_sync": "AsenaPlug_RouteSync",
     "rescue":     "AsenaPlug_Rescue",
 }
+# update-test: release tetikleme (no-op yorum, işlevi değiştirmez)
