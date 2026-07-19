@@ -1,8 +1,11 @@
-name: Android — APK Release + AAB (private)
+name: Android — APK Release + AAB (private) + Play
 
-# Her mobile/androidapp değişiminde APK + AAB üretir:
+# Her mobile/androidapp değişiminde İMZALI release APK + AAB üretir (upload key = secret):
 #  - APK  -> GitHub RELEASE'e DİREKT dosya (AsenaPlug.apk, zip yok, herkes tek tık indirir)
-#  - AAB  -> PRIVATE artifact (Play Store bundle; sadece repo erişimi olan indirir, public DEĞİL)
+#  - AAB  -> PRIVATE artifact (Play bundle; sadece repo erişimi olan indirir, public DEĞİL)
+#  - AAB  -> PLAY_SERVICE_ACCOUNT_JSON secret'ı VARSA Play 'internal' track'e otomatik yüklenir
+#            (yoksa adım sessizce atlanır -> Play hazır olunca secret ekle, aktifleşir).
+# İmza secret'ları: ANDROID_KEYSTORE_BASE64 / _PASSWORD / KEY_ALIAS / KEY_PASSWORD.
 # Aar repoda hazır (app/libs) -> gomobile/NDK GEREKMEZ, sadece gradle.
 # Release 'android-v...' tag'i + "AsenaPlug Android" başlığı + PRERELEASE:
 #   Windows updater /releases/latest'i kullanıyor; prerelease oraya GİRMEZ ->
@@ -21,6 +24,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # secrets 'if:' içinde doğrudan okunamaz -> job env'e taşı, adımlar env.* ile kontrol eder
+      PLAY_SA_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
     defaults:
       run:
         working-directory: mobile/androidapp
@@ -42,13 +48,31 @@ jobs:
       - name: local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      - name: Build APK + AAB (debug)
+      - name: Keystore'u secret'tan çöz (release imzası)
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/upload-keystore.jks" >> "$GITHUB_ENV"
+            echo "release imzası AKTİF"
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 yok -> release imzasız (Play yüklenemez)"
+          fi
+
+      - name: Build (İMZALI release APK + AAB)
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_VERSION_NAME: 1.0.${{ github.run_number }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug bundleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace
 
       - name: APK'yı temiz adlandır (AsenaPlug.apk)
-        run: cp app/build/outputs/apk/debug/app-debug.apk AsenaPlug.apk
+        run: cp app/build/outputs/apk/release/app-release.apk AsenaPlug.apk
 
       - name: Android Release (SADECE APK — public, direkt indir)
         uses: softprops/action-gh-release@v2
@@ -64,5 +88,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: asenaplug-aab-private
-          path: mobile/androidapp/app/build/outputs/bundle/debug/*.aab
+          path: mobile/androidapp/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
+
+      - name: Play Store'a yükle (internal track) — SADECE service account secret'ı varsa
+        if: ${{ env.PLAY_SA_JSON != '' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: asena.plug
+          releaseFiles: mobile/androidapp/app/build/outputs/bundle/release/*.aab
+          track: internal
+          status: completed

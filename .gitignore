@@ -23,3 +23,8 @@ windows/bundled/asena-killswitch.exe  # build.ps1 tarafından go ile derlenir (k
 
 # superpowers plugin scaffolding
 docs/superpowers/
+
+# Android imza anahtarlari — ASLA commit edilmez
+*.jks
+*.keystore
+key.properties
