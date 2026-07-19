@@ -1,0 +1,58 @@
+name: Build Android (APK + AAB)
+
+# Her mobile/androidapp değişiminde APK + AAB üretir. Aar repoda hazır (app/libs) —
+# gomobile/NDK GEREKMEZ, sadece gradle. Çıktılar "artifact" olarak yüklenir: repo erişimi
+# olmayan kimse göremez (AAB private kalır).
+
+on:
+  push:
+    paths:
+      - 'mobile/androidapp/**'
+      - '.github/workflows/mobile-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile/androidapp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: SDK bileşenleri (platform 35 + build-tools 35)
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" >/dev/null
+
+      - name: local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Build APK + AAB (debug)
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug bundleDebug --no-daemon --stacktrace
+
+      - name: APK yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: asenaplug-apk
+          path: mobile/androidapp/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: AAB yükle (private)
+        uses: actions/upload-artifact@v4
+        with:
+          name: asenaplug-aab-private
+          path: mobile/androidapp/app/build/outputs/bundle/debug/*.aab
+          if-no-files-found: error

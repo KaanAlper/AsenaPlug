@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- NoActionBar: Compose UI tam ekran, sistem başlık çubuğu YOK. Şeffaf sistem çubukları
+         (içerik arkasına çizer, Compose systemBarsPadding ile boşluk verir). -->
+    <style name="Theme.AsenaPlug" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">#0E1117</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

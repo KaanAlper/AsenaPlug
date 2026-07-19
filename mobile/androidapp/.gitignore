@@ -1,0 +1,9 @@
+# Android / Gradle build çıktıları
+build/
+.gradle/
+local.properties
+.idea/
+*.iml
+.DS_Store
+# WARP config (asla commit etme — anahtar içerir)
+**/assets/config.json
