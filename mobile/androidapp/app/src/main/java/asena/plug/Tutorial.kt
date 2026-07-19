@@ -4,8 +4,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -138,8 +138,9 @@ fun TutorialOverlay(
             AnimatedContent(
                 targetState = stepIndex,
                 transitionSpec = {
-                    (slideInHorizontally(tween(320)) { it / 3 } + fadeIn(tween(320))) togetherWith
-                        (slideOutHorizontally(tween(220)) { -it / 3 } + fadeOut(tween(180)))
+                    // slide DEĞİL: fade + hafif pop (scale)
+                    (fadeIn(tween(300)) + scaleIn(tween(300), initialScale = 0.92f)) togetherWith
+                        (fadeOut(tween(160)) + scaleOut(tween(160), targetScale = 0.96f))
                 },
                 label = "tutText"
             ) { si ->

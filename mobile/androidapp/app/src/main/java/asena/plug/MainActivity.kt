@@ -10,7 +10,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -213,11 +219,22 @@ private fun AppContent() {
             Column(Modifier.fillMaxSize().systemBarsPadding()) {
                 AppBar()
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    when (effTab) {
-                        0 -> if (cfg == null) OnboardingScreen(registering, regError, doRegister)
-                        else ConnectScreen(status, toggle)
-                        1 -> SitesScreen()
-                        else -> SettingsScreen()
+                    // sekme değişiminde SLIDE (yön: yeni index büyükse sağdan, küçükse soldan)
+                    AnimatedContent(
+                        targetState = effTab,
+                        transitionSpec = {
+                            val dir = if (targetState > initialState) 1 else -1
+                            (slideInHorizontally(tween(300)) { dir * it } + fadeIn(tween(300))) togetherWith
+                                (slideOutHorizontally(tween(300)) { -dir * it } + fadeOut(tween(220)))
+                        },
+                        label = "tab"
+                    ) { t ->
+                        when (t) {
+                            0 -> if (cfg == null) OnboardingScreen(registering, regError, doRegister)
+                            else ConnectScreen(status, toggle)
+                            1 -> SitesScreen()
+                            else -> SettingsScreen()
+                        }
                     }
                 }
                 BottomNav(effTab) { if (!tutActive) tab = it }
