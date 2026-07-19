@@ -1,8 +1,12 @@
-name: Build Android (APK + AAB)
+name: Android — APK Release + AAB (private)
 
-# Her mobile/androidapp değişiminde APK + AAB üretir. Aar repoda hazır (app/libs) —
-# gomobile/NDK GEREKMEZ, sadece gradle. Çıktılar "artifact" olarak yüklenir: repo erişimi
-# olmayan kimse göremez (AAB private kalır).
+# Her mobile/androidapp değişiminde APK + AAB üretir:
+#  - APK  -> GitHub RELEASE'e DİREKT dosya (AsenaPlug.apk, zip yok, herkes tek tık indirir)
+#  - AAB  -> PRIVATE artifact (Play Store bundle; sadece repo erişimi olan indirir, public DEĞİL)
+# Aar repoda hazır (app/libs) -> gomobile/NDK GEREKMEZ, sadece gradle.
+# Release 'android-v...' tag'i + "AsenaPlug Android" başlığı + PRERELEASE:
+#   Windows updater /releases/latest'i kullanıyor; prerelease oraya GİRMEZ ->
+#   Android release'leri Windows self-update'ini bozmaz, release listesi karışmaz.
 
 on:
   push:
@@ -12,7 +16,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write          # release + tag oluşturmak için
 
 jobs:
   build:
@@ -43,14 +47,20 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug bundleDebug --no-daemon --stacktrace
 
-      - name: APK yükle
-        uses: actions/upload-artifact@v4
-        with:
-          name: asenaplug-apk
-          path: mobile/androidapp/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+      - name: APK'yı temiz adlandır (AsenaPlug.apk)
+        run: cp app/build/outputs/apk/debug/app-debug.apk AsenaPlug.apk
 
-      - name: AAB yükle (private)
+      - name: Android Release (SADECE APK — public, direkt indir)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v1.0.${{ github.run_number }}
+          name: AsenaPlug Android v1.0.${{ github.run_number }}
+          prerelease: true            # /releases/latest'e girmez -> Windows updater güvende
+          make_latest: "false"
+          files: mobile/androidapp/AsenaPlug.apk
+          generate_release_notes: true
+
+      - name: AAB — PRIVATE artifact (Play Store; sadece repo erişimi olan indirir)
         uses: actions/upload-artifact@v4
         with:
           name: asenaplug-aab-private

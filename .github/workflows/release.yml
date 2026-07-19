@@ -92,8 +92,10 @@ jobs:
       - name: Release oluştur + exe yükle
         uses: softprops/action-gh-release@v2
         with:
+          # tag 'v1.0.x' DEĞİŞMEZ: Windows updater /releases/latest tag_name'i buna göre
+          # parse ediyor. Sadece görünen ada "Windows" eklendi -> release listesi karışmaz.
           tag_name: v${{ steps.ver.outputs.version }}
-          name: AsenaPlug v${{ steps.ver.outputs.version }}
+          name: AsenaPlug Windows v${{ steps.ver.outputs.version }}
           files: |
             windows/dist/AsenaPlug.exe
             windows/dist/AsenaPlug.exe.sha256
