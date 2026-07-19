@@ -3,7 +3,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- API 34+: VPN foreground service tipi. specialUse çökme-riski yok (systemExempted runtime kontrolü aksine). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Arka planda/uykuda öldürülmemek için pil optimizasyonu muafiyeti iste. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"
@@ -25,7 +29,11 @@
         <service
             android:name=".AsenaVpnService"
             android:exported="false"
+            android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_VPN_SERVICE">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="MASQUE VPN tüneli — arka planda bağlı kalmalı" />
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>

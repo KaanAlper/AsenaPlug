@@ -1,12 +1,19 @@
 package asena.plug
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.IpPrefix
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidcore.Androidcore
+import androidcore.ProtectFunc
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetAddress
 
@@ -24,25 +31,57 @@ class AsenaVpnService : VpnService() {
     companion object {
         private const val TAG = "AsenaVpn"
         const val ACTION_STOP = "asena.plug.STOP"
+        const val ACTION_RECONNECT = "asena.plug.RECONNECT"
+        private const val CH_ID = "asena_vpn"
+        private const val NOTIF_ID = 1001
     }
 
     private var tun: ParcelFileDescriptor? = null
+    private var selectiveMode = false
+
+    /** Kalıcı foreground bildirimi -> sistem servisi arka planda/uykuda öldürmez. */
+    private fun ensureForeground(text: String) {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(CH_ID) == null) {
+            val ch = NotificationChannel(CH_ID, "AsenaPlug VPN", NotificationManager.IMPORTANCE_LOW)
+            ch.setShowBadge(false)
+            ch.description = "MASQUE tüneli bağlıyken kalıcı bildirim"
+            nm.createNotificationChannel(ch)
+        }
+        val pi = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notif: Notification = Notification.Builder(this, CH_ID)
+            .setContentTitle("AsenaPlug")
+            .setContentText(text)
+            .setSmallIcon(R.drawable.ic_stat_shield)
+            .setOngoing(true)
+            .setContentIntent(pi)
+            .build()
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIF_ID, notif)
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopTunnel()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> { stopTunnel(); return START_NOT_STICKY }
+            ACTION_RECONNECT -> { reconnect(); return START_STICKY }
+            else -> startTunnel()
         }
-        startTunnel()
         return START_STICKY
     }
 
     private fun startTunnel() {
-        if (Androidcore.isRunning()) {
+        if (Androidcore.isRunning() || Androidcore.isSelectiveRunning()) {
             TunnelState.status.value = TunnelStatus.ON
             return
         }
         TunnelState.status.value = TunnelStatus.CONNECTING
+        ensureForeground("MASQUE el sıkışıyor…")   // servisi hemen foreground yap (öldürülme koruması)
         try {
             val cfg = ConfigStore.getOrLoad(this)
             if (cfg == null) {
@@ -82,14 +121,28 @@ class AsenaVpnService : VpnService() {
             tun = pfd
 
             val fd = pfd.detachFd()
+            val useSelective = SettingsStore.isBlacklist
+            val http2 = SettingsStore.useHttp2.value
+            val blJson = if (useSelective) JSONArray(DomainStore.domains.value).toString() else "[]"
 
             Thread {
                 try {
-                    Androidcore.start(fd.toLong(), cfg, true /*http2*/)
-                    Log.i(TAG, "usque çekirdeği başladı (fd=$fd)")
+                    if (useSelective) {
+                        // selective: TCP blacklist IP->tünel, gerisi direkt; DNS blacklist->tünelden temiz.
+                        val protect = ProtectFunc { f -> protect(f) } // VpnService.protect -> direkt bypass
+                        Androidcore.startSelective(fd.toLong(), cfg, blJson, http2, protect)
+                        selectiveMode = true
+                        Log.i(TAG, "selective çekirdek başladı (fd=$fd, ${DomainStore.domains.value.size} site, http2=$http2)")
+                    } else {
+                        Androidcore.start(fd.toLong(), cfg, http2)
+                        selectiveMode = false
+                        Log.i(TAG, "full-tünel çekirdek başladı (fd=$fd, http2=$http2)")
+                    }
                     TunnelState.status.value = TunnelStatus.ON
+                    val modeText = if (selectiveMode) "Seçili siteler tünelde" else "Tüm trafik korumada"
+                    ensureForeground("Korumadasın · $modeText")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Androidcore.start hata: ${e.message}", e)
+                    Log.e(TAG, "çekirdek başlatma hata: ${e.message}", e)
                     fail()
                 }
             }.start()
@@ -119,15 +172,37 @@ class AsenaVpnService : VpnService() {
         try { tun?.close() } catch (_: Exception) {}
         tun = null
         TunnelState.status.value = TunnelStatus.OFF
+        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
         stopSelf()
     }
 
-    private fun stopTunnel() {
-        try { Androidcore.stop() } catch (_: Exception) {}
+    /** Go çekirdeğini durdur + tun'u kapat (servis lifecycle'a dokunmadan). */
+    private fun teardownCore() {
+        try { if (selectiveMode) Androidcore.stopSelective() else Androidcore.stop() } catch (_: Exception) {}
         try { tun?.close() } catch (_: Exception) {}
         tun = null
+        selectiveMode = false
+    }
+
+    private fun stopTunnel() {
+        teardownCore()
         TunnelState.status.value = TunnelStatus.OFF
+        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
         stopSelf()
+    }
+
+    /**
+     * Blacklist değişince yeniden bağlan: çekirdeği durdur, yeni TUN + yeni blacklist ile başlat.
+     * (Blacklist snapshot'ı bağlanma anında alınıyor -> yeni site eklenince yeniden başlamalı.)
+     */
+    private fun reconnect() {
+        if (!Androidcore.isRunning() && !Androidcore.isSelectiveRunning()) { startTunnel(); return }
+        TunnelState.status.value = TunnelStatus.CONNECTING
+        Thread {
+            teardownCore()
+            try { Thread.sleep(350) } catch (_: Exception) {}  // fd'nin serbest kalması için kısa nefes
+            startTunnel()
+        }.start()
     }
 
     override fun onRevoke() { stopTunnel(); super.onRevoke() }

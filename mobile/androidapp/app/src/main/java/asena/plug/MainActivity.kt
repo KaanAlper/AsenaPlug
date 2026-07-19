@@ -5,7 +5,14 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.net.VpnService
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -130,6 +137,41 @@ private fun stopVpn(ctx: Context) {
     ctx.startService(Intent(ctx, AsenaVpnService::class.java).setAction(AsenaVpnService.ACTION_STOP))
 }
 
+// Arka planda öldürülmemek için: bildirim izni (foreground bildirimi görünsün) + pil optimizasyonu muafiyeti (bir kez).
+private fun ensureBackgroundPerms(ctx: Context, requestNotif: () -> Unit) {
+    if (Build.VERSION.SDK_INT >= 33 &&
+        ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        requestNotif()
+    }
+    try {
+        val pm = ctx.getSystemService(PowerManager::class.java)
+        if (pm != null && !pm.isIgnoringBatteryOptimizations(ctx.packageName) && !SettingsStore.batteryAsked) {
+            SettingsStore.setBatteryAsked(ctx, true)
+            ctx.startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    } catch (_: Exception) {}
+}
+
+// Blacklist modunda BAĞLIYKEN site eklenince otomatik yeniden bağlan (debounce: hızlı eklemeleri birleştir).
+private val reconnectHandler = Handler(Looper.getMainLooper())
+private var reconnectRunnable: Runnable? = null
+private fun scheduleReconnect(ctx: Context, msg: String) {
+    if (!SettingsStore.isBlacklist) return
+    val st = TunnelState.status.value
+    if (st != TunnelStatus.ON && st != TunnelStatus.CONNECTING) return
+    val app = ctx.applicationContext
+    reconnectRunnable?.let { reconnectHandler.removeCallbacks(it) }
+    val r = Runnable {
+        app.startService(Intent(app, AsenaVpnService::class.java).setAction(AsenaVpnService.ACTION_RECONNECT))
+        Toast.makeText(app, msg, Toast.LENGTH_SHORT).show()
+    }
+    reconnectRunnable = r
+    reconnectHandler.postDelayed(r, 900)
+}
+
 @Composable
 fun AsenaApp() {
     val ctx = LocalContext.current
@@ -197,10 +239,14 @@ private fun AppContent() {
         ActivityResultContracts.StartActivityForResult()
     ) { res -> if (res.resultCode == Activity.RESULT_OK) startVpn(ctx) }
 
+    val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     val toggle: () -> Unit = {
         when (status) {
             TunnelStatus.ON, TunnelStatus.CONNECTING -> stopVpn(ctx)
             TunnelStatus.OFF -> {
+                // bağlanırken: bildirim izni + pil muafiyeti iste (arka planda öldürülmesin)
+                ensureBackgroundPerms(ctx) { notifPerm.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
                 val prep = VpnService.prepare(ctx)
                 if (prep != null) launcher.launch(prep) else startVpn(ctx)
             }
@@ -275,6 +321,10 @@ private fun AppBar() {
 private fun ConnectScreen(status: TunnelStatus, onToggle: () -> Unit) {
     val p = LocalPalette.current
     val s = LocalStrings.current
+    val scopeVal by SettingsStore.scope.collectAsState()
+    val http2 by SettingsStore.useHttp2.collectAsState()
+    val scopeLabel = if (scopeVal == "blacklist") s.onlyBlacklist else s.everything
+    val transportLabel = if (http2) "HTTP/2" else "HTTP/3"
     Column(
         Modifier.fillMaxSize().padding(horizontal = 26.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -284,7 +334,7 @@ private fun ConnectScreen(status: TunnelStatus, onToggle: () -> Unit) {
         Spacer(Modifier.height(24.dp))
 
         val (big, sub, bigColor) = when (status) {
-            TunnelStatus.ON -> Triple(s.protected, s.subScope, p.text)
+            TunnelStatus.ON -> Triple(s.protected, "$transportLabel · $scopeLabel", p.text)
             TunnelStatus.CONNECTING -> Triple(s.connecting, s.subHandshake, p.text)
             TunnelStatus.OFF -> Triple(s.off, s.subTapToConnect, p.muted)
         }
@@ -529,7 +579,11 @@ private fun SitesScreen() {
         if (uri != null) {
             runCatching {
                 ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            }.getOrNull()?.let { DomainStore.addMany(ctx, it) }
+            }.getOrNull()?.let {
+                val res = DomainStore.addMany(ctx, it)
+                Toast.makeText(ctx, String.format(s.importToast, res.added, res.skipped), Toast.LENGTH_SHORT).show()
+                if (res.added > 0) scheduleReconnect(ctx, s.reconnectToast)
+            }
         }
     }
 
@@ -574,7 +628,8 @@ private fun SitesScreen() {
                             item(key = "grp:${g.apex}") {
                                 GroupHeader(g.apex, subs.size, apexIsMember, expanded[g.apex] == true,
                                     onToggle = { expanded[g.apex] = !(expanded[g.apex] ?: false) },
-                                    onDelete = { DomainStore.remove(ctx, g.apex) })
+                                    // grup X'i = TÜM üyeleri sil (apex + alt-alanlar)
+                                    onDelete = { g.members.forEach { DomainStore.remove(ctx, it) } })
                             }
                             if (expanded[g.apex] == true) {
                                 items(subs, key = { it }) { m -> SiteRow(m, true) { DomainStore.remove(ctx, m) } }
@@ -595,7 +650,10 @@ private fun SitesScreen() {
     }
 
     if (showAdd) AddDialog(onDismiss = { showAdd = false }) { text ->
-        DomainStore.add(ctx, text); showAdd = false
+        val ok = DomainStore.add(ctx, text)
+        if (!ok) Toast.makeText(ctx, String.format(s.dupToast, text.trim().lowercase()), Toast.LENGTH_SHORT).show()
+        else scheduleReconnect(ctx, s.reconnectToast)
+        showAdd = false
     }
 }
 
@@ -609,7 +667,7 @@ private fun GroupHeader(
         Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(if (apexIsMember) p.accent else p.faint))
+        Box(Modifier.size(8.dp).clip(CircleShape).background(p.accent))
         Spacer(Modifier.width(12.dp))
         Text(apex, color = p.text, fontFamily = mono, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
         Box(Modifier.clip(RoundedCornerShape(7.dp)).background(p.accent.copy(alpha = .16f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
@@ -617,10 +675,9 @@ private fun GroupHeader(
         }
         Spacer(Modifier.width(6.dp))
         Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(20.dp).rotate(if (expanded) 180f else 0f), tint = p.muted)
-        if (apexIsMember) {
-            Spacer(Modifier.width(8.dp))
-            Icon(Icons.Filled.Close, "sil", Modifier.size(16.dp).clickable { onDelete() }, tint = p.faint)
-        }
+        Spacer(Modifier.width(8.dp))
+        // grup X'i tüm üyeleri siler
+        Icon(Icons.Filled.Close, "grubu sil", Modifier.size(16.dp).clickable { onDelete() }, tint = p.faint)
     }
     Divider()
 }
@@ -633,7 +690,8 @@ private fun SiteRow(domain: String, indent: Boolean, onDelete: () -> Unit) {
         Modifier.fillMaxWidth().padding(start = if (indent) 20.dp else 0.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(if (indent) 6.dp else 8.dp).clip(CircleShape).background(p.faint))
+        Box(Modifier.size(if (indent) 6.dp else 8.dp).clip(CircleShape)
+            .background(if (indent) p.accent.copy(alpha = .5f) else p.accent))
         Spacer(Modifier.width(12.dp))
         Text(domain, color = if (indent) p.muted else p.text, fontFamily = mono, fontSize = 13.sp, modifier = Modifier.weight(1f))
         Text(s.inList, color = p.muted, fontFamily = mono, fontSize = 10.sp, letterSpacing = 0.6.sp)
@@ -716,10 +774,20 @@ private fun SettingsScreen() {
         Column(Modifier.weight(1f).verticalScroll(scroll).padding(horizontal = 22.dp)) {
             Spacer(Modifier.height(18.dp))
             SegLabel(s.transport)
-            Box(Modifier.fillMaxWidth().tutorialTarget("transport")) { Segmented(listOf("HTTP/2", "HTTP/3"), 0, null) }
+            val http2 by SettingsStore.useHttp2.collectAsState()
+            Box(Modifier.fillMaxWidth().tutorialTarget("transport")) {
+                Segmented(listOf("HTTP/2", "HTTP/3"), if (http2) 0 else 1) { i ->
+                    SettingsStore.setUseHttp2(ctx, i == 0)
+                }
+            }
             Spacer(Modifier.height(18.dp))
             SegLabel(s.scope)
-            Box(Modifier.fillMaxWidth().tutorialTarget("scope")) { Segmented(listOf(s.onlyBlacklist, s.everything), 1, null) }
+            val scopeVal by SettingsStore.scope.collectAsState()
+            Box(Modifier.fillMaxWidth().tutorialTarget("scope")) {
+                Segmented(listOf(s.onlyBlacklist, s.everything), if (scopeVal == "blacklist") 0 else 1) { i ->
+                    SettingsStore.setScope(ctx, if (i == 0) "blacklist" else "everything")
+                }
+            }
 
             Spacer(Modifier.height(18.dp))
             SegLabel(s.theme)

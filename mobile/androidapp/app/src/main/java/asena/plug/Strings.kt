@@ -19,6 +19,7 @@ data class Strings(
     // siteler
     val sitesTitle: String, val searchHint: String, val importFile: String, val importHint: String,
     val emptyList: String, val noMatch: String, val inList: String,
+    val dupToast: String, val importToast: String, val reconnectToast: String,
     val addSiteTitle: String, val addSiteHint: String, val addSitePlaceholder: String, val add: String, val cancel: String,
     // ayarlar
     val settingsTitle: String, val transport: String, val scope: String, val theme: String, val color: String, val language: String,
@@ -36,6 +37,7 @@ private val TR = Strings(
     start = "Başla", onboardDesc = "Başlamak için anonim bir Cloudflare WARP hesabı oluşturulur. Kişisel bilgi gerekmez — sadece bir cihaz anahtarı.", creatingAccount = "Hesabın oluşturuluyor…",
     sitesTitle = "Siteler", searchHint = "alan ara…", importFile = "Listeden içe aktar", importHint = ".txt dosyası",
     emptyList = "Henüz site yok — + ile ekle", noMatch = "Eşleşme yok", inList = "listede",
+    dupToast = "%s zaten listede", importToast = "%1\$d eklendi · %2\$d zaten vardı", reconnectToast = "Yeni siteler uygulanıyor…",
     addSiteTitle = "Site ekle", addSiteHint = "Bir alan adı gir.", addSitePlaceholder = "ornek.com", add = "Ekle", cancel = "Vazgeç",
     settingsTitle = "Mod & Ayarlar", transport = "Taşıma", scope = "Kapsam", theme = "Tema", color = "Renk", language = "Dil",
     system = "Sistem", dark = "Koyu", light = "Açık", onlyBlacklist = "Sadece blacklist", everything = "Her şey",
@@ -60,6 +62,7 @@ private val EN = Strings(
     start = "Start", onboardDesc = "To begin, an anonymous Cloudflare WARP account is created. No personal info — just a device key.", creatingAccount = "Creating your account…",
     sitesTitle = "Sites", searchHint = "search domain…", importFile = "Import from list", importHint = ".txt file",
     emptyList = "No sites yet — add with +", noMatch = "No match", inList = "listed",
+    dupToast = "%s already listed", importToast = "%1\$d added · %2\$d already there", reconnectToast = "Applying new sites…",
     addSiteTitle = "Add site", addSiteHint = "Enter a domain.", addSitePlaceholder = "example.com", add = "Add", cancel = "Cancel",
     settingsTitle = "Mode & Settings", transport = "Transport", scope = "Scope", theme = "Theme", color = "Color", language = "Language",
     system = "System", dark = "Dark", light = "Light", onlyBlacklist = "Blacklist only", everything = "Everything",

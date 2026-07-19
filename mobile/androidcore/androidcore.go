@@ -19,6 +19,10 @@ import (
 	"github.com/Diniboy1123/usque/api" // fork: StartFullTunnelFd (bkz. mobile/usque-fork/api_mobile.go)
 )
 
+// ProtectFunc: Kotlin (VpnService.protect) implement eder — direkt soketlerin TUN'u bypass etmesi için
+// (selective mode'da "gerisi direkt" trafiği tünele geri girmesin). gomobile Java arayüzü üretir.
+type ProtectFunc interface{ Protect(fd int32) bool }
+
 var (
 	mu   sync.Mutex
 	stop func()

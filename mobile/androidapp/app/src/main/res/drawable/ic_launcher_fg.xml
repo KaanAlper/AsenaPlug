@@ -1,7 +1,11 @@
+<!-- Adaptive icon foreground: 108dp tuval. Logo 256x256 (dikey kenardan-kenara).
+     gravity=fill -> bitmap inset bounds'a ÖLÇEKLENİR (center değil: center native 256dp
+     çizip kırpıyordu = "scale edilmiyor" bug'ı). inset 24dp -> logo ~60dp yükseklik,
+     circle/squircle mask safe-zone (66dp) içinde tam görünür. -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:insetLeft="20dp" android:insetTop="20dp"
-    android:insetRight="20dp" android:insetBottom="20dp">
+    android:insetLeft="12dp" android:insetTop="12dp"
+    android:insetRight="12dp" android:insetBottom="12dp">
     <bitmap
         android:src="@drawable/asena_logo"
-        android:gravity="center" />
+        android:gravity="fill" />
 </inset>

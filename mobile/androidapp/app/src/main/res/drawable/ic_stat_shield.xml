@@ -1,0 +1,12 @@
+<!-- Status bar bildirim ikonu: monokrom kalkan (sistem beyaza tint'ler). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2 L20,5 L20,11 C20,16 16.4,20.3 12,22 C7.6,20.3 4,16 4,11 L4,5 Z M12,4.2 L6,6.4 L6,11 C6,14.9 8.7,18.3 12,19.8 C15.3,18.3 18,14.9 18,11 L18,6.4 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M10.6,13.6 L8.7,11.7 L7.5,12.9 L10.6,16 L16.5,10.1 L15.3,8.9 Z" />
+</vector>

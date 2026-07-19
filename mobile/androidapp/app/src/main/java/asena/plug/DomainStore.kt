@@ -19,17 +19,25 @@ object DomainStore {
         domains.value = set.sorted()
     }
 
-    fun add(ctx: Context, raw: String) {
-        val d = normalize(raw) ?: return
-        if (domains.value.contains(d)) return
+    /** eklendi mi? zaten varsa/geçersizse false (2 kere yazmaz). */
+    fun add(ctx: Context, raw: String): Boolean {
+        val d = normalize(raw) ?: return false
+        if (domains.value.contains(d)) return false
         commit(ctx, (domains.value + d).sorted())
+        return true
     }
 
-    /** .txt / URL listesi yapıştırma: satır/virgül/boşlukla ayır, hepsini normalize et. */
-    fun addMany(ctx: Context, text: String) {
-        val add = text.split('\n', ',', ' ', '\t').mapNotNull { normalize(it) }
-        if (add.isEmpty()) return
-        commit(ctx, (domains.value + add).distinct().sorted())
+    /** içe aktarma sonucu: kaç yeni eklendi, kaç tanesi zaten vardı (skip). */
+    data class ImportResult(val added: Int, val skipped: Int)
+
+    /** .txt / URL listesi yapıştırma: satır/virgül/boşlukla ayır, normalize + dedup (dosya-içi + mevcut). */
+    fun addMany(ctx: Context, text: String): ImportResult {
+        val parsed = text.split('\n', ',', ' ', '\t').mapNotNull { normalize(it) }.distinct()
+        if (parsed.isEmpty()) return ImportResult(0, 0)
+        val existing = domains.value.toHashSet()
+        val fresh = parsed.filterNot { it in existing }   // zaten olanı atla, 2 kere yazma
+        if (fresh.isNotEmpty()) commit(ctx, (domains.value + fresh).sorted())
+        return ImportResult(fresh.size, parsed.size - fresh.size)
     }
 
     fun remove(ctx: Context, d: String) {
