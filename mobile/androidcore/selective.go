@@ -65,19 +65,25 @@ func StartSelective(tunFd int, configJSON, blacklistJSON string, useHTTP2 bool, 
 		return c.Control(func(fd uintptr) { protect.Protect(int32(fd)) })
 	}
 
-	// (2) TCP: hedef IP tünelli mi?
+	// (2) TCP karar: 443 -> SNI-tabanlı (DNS-bağımsız, DoH/DoT baypasını çözer); diğer portlar -> IP/ipset.
 	sd := transport.FuncStreamDialer(func(ctx context.Context, addr string) (transport.StreamConn, error) {
-		host, _, _ := net.SplitHostPort(addr)
+		host, port, _ := net.SplitHostPort(addr)
 		ip, _ := netip.ParseAddr(host)
+		// HTTPS: ClientHello SNI'sına göre tünel/direkt (DNS nasıl çözülürse çözülsün doğru yönlendirir).
+		if port == "443" {
+			return newLazySNIConn(addr, ip, ipset, match, tunNet, directControl), nil
+		}
+		// Diğer portlar (SNI yok): DNS'ten öğrenilen ipset -> tünel, değilse direkt.
 		var c net.Conn
+		var e error
 		if ip.IsValid() && ipset.Contains(ip) {
-			c, err = tunNet.DialContext(ctx, "tcp", addr) // TÜNEL
+			c, e = tunNet.DialContext(ctx, "tcp", addr) // TÜNEL
 		} else {
 			d := &net.Dialer{Control: directControl}
-			c, err = d.DialContext(ctx, "tcp", addr) // DİREKT (protect)
+			c, e = d.DialContext(ctx, "tcp", addr) // DİREKT (protect)
 		}
-		if err != nil {
-			return nil, err
+		if e != nil {
+			return nil, e
 		}
 		if sc, ok := c.(transport.StreamConn); ok {
 			return sc, nil
