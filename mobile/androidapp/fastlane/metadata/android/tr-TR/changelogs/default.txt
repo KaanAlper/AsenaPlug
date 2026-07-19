@@ -1,5 +1,8 @@
-İlk sürüm 🐺
-• Cloudflare MASQUE (WARP) tabanlı gizli VPN
-• "Her şey" ve "Seçili siteler" modları
-• HTTP/2 & HTTP/3, canlı hız testi
-• Kayıt yok, izleme yok — tamamen anonim
+🐺 AsenaPlug'a hoş geldin — Cloudflare MASQUE (WARP) tabanlı, gizlilik odaklı VPN.
+
+• Anonim — kayıt yok, iz yok, takip yok
+• İki mod — her şeyi tünelle ya da yalnızca seçtiğin siteleri
+• Düşük gecikme için HTTP/2 & HTTP/3
+• Canlı hız testi, açık/koyu tema, Türkçe & İngilizce
+
+Hızlı, gizli ve özgür — kutudan çıktığı gibi.

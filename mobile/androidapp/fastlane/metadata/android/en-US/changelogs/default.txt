@@ -1,5 +1,8 @@
-First release 🐺
-• Private VPN over Cloudflare MASQUE (WARP)
-• "Everything" and "Selected sites" modes
-• HTTP/2 & HTTP/3, live speed test
-• No logs, no tracking — fully anonymous
+🐺 Welcome to AsenaPlug — a privacy-first VPN over Cloudflare MASQUE (WARP).
+
+• Anonymous — no sign-up, no logs, no tracking
+• Two modes — tunnel everything, or only the sites you choose
+• HTTP/2 & HTTP/3 for low latency
+• Live speed test, light/dark themes, Turkish & English
+
+Fast, private and open — right out of the box.
