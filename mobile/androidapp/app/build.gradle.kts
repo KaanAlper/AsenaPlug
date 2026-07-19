@@ -13,9 +13,24 @@ android {
         applicationId = "asena.plug"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1-poc"
+        // CI her build'de artırır (Play aynı versionCode'u reddeder); yerelde 1.
+        versionCode = (System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull()) ?: 1
+        versionName = System.getenv("ANDROID_VERSION_NAME") ?: "0.1-poc"
         ndk { abiFilters += "arm64-v8a" }   // aar arm64-only
+    }
+
+    // Release imzası — CI keystore'u ANDROID_KEYSTORE_BASE64 secret'ından çözüp
+    // ANDROID_KEYSTORE_PATH env'ini verir. Yerelde keystore yoksa release imzasız kalır (dev debug kullanır).
+    signingConfigs {
+        create("release") {
+            val ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            if (ksPath != null && file(ksPath).exists()) {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     compileOptions {
@@ -28,6 +43,12 @@ android {
 
     buildTypes {
         getByName("debug") { isMinifyEnabled = false }
+        getByName("release") {
+            isMinifyEnabled = false   // aar native kod içeriyor; şimdilik shrink yok
+            val ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            signingConfig = if (ksPath != null && file(ksPath).exists())
+                signingConfigs.getByName("release") else null
+        }
     }
 }
 
