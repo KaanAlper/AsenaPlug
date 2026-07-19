@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AsenaPlug — Özellik Grafiği (1024×500)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{ --amber:#F5B841; --white:#E9ECF3; --mut:#9AA4B6; }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{background:#1a1f2a; min-height:100vh; display:grid; place-items:center; gap:14px;
+    padding:24px; font-family:'Sora',sans-serif}
+  /* Play Store özellik grafiği: TAM 1024×500. DevTools > öğeyi seç > "Capture node screenshot" ile al. */
+  .feature{
+    position:relative; width:1024px; height:500px; overflow:hidden; border-radius:2px;
+    background:
+      radial-gradient(42% 60% at 82% 8%, rgba(245,184,65,.14), transparent 60%),
+      radial-gradient(38% 55% at 4% 96%, rgba(42,51,64,.34), transparent 60%),
+      radial-gradient(80% 90% at 30% 42%, #12171f, #0B0E13);
+    color:var(--white);
+  }
+  /* sonar halkalar (sol) */
+  .rings{position:absolute; left:251px; top:250px; transform:translate(-50%,-50%)}
+  .rings span{position:absolute; border:2.4px solid var(--amber); border-radius:50%;
+    left:50%; top:50%; transform:translate(-50%,-50%)}
+  .rings span:nth-child(1){width:300px;height:300px;opacity:.60}
+  .rings span:nth-child(2){width:400px;height:400px;opacity:.35}
+  .rings span:nth-child(3){width:504px;height:504px;opacity:.18}
+  .glow{position:absolute; left:251px; top:250px; width:300px; height:300px;
+    transform:translate(-50%,-50%); border-radius:50%;
+    background:radial-gradient(circle, rgba(245,184,65,.28), transparent 62%); filter:blur(14px)}
+  .wolf{position:absolute; left:251px; top:250px; width:205px; height:205px;
+    transform:translate(-50%,-50%)}
+  .text{position:absolute; left:466px; top:0; height:100%; width:520px;
+    display:flex; flex-direction:column; justify-content:center; gap:0}
+  .kicker{font-family:'JetBrains Mono',monospace; font-size:15px; letter-spacing:.28em;
+    color:var(--amber); font-weight:500}
+  .word{font-weight:800; font-size:76px; letter-spacing:-.02em; line-height:1.02; margin-top:14px}
+  .word b{color:var(--amber); font-weight:800}
+  .bar{width:120px; height:3px; background:var(--amber); margin:16px 0 14px}
+  .tag{font-weight:600; font-size:27px; color:var(--white)}
+  .chips{display:flex; gap:26px; margin-top:26px; font-family:'JetBrains Mono',monospace;
+    font-size:16px; color:var(--mut)}
+  .chips i{font-style:normal; display:inline-flex; align-items:center; gap:9px}
+  .chips i::before{content:""; width:9px; height:9px; border-radius:50%; background:var(--amber)}
+  .cap{font-family:'JetBrains Mono',monospace; font-size:12px; color:#8A94A4}
+</style>
+</head>
+<body>
+  <div class="feature">
+    <div class="glow"></div>
+    <div class="rings"><span></span><span></span><span></span></div>
+    <img class="wolf" src="asena_logo.png" alt="AsenaPlug">
+    <div class="text">
+      <div class="kicker">DPI / DNS BYPASS &nbsp;·&nbsp; MASQUE VPN</div>
+      <div class="word">Asena<b>Plug</b></div>
+      <div class="bar"></div>
+      <div class="tag">Özgür internet. Gizli kalarak.</div>
+      <div class="chips"><i>Cloudflare MASQUE</i><i>Kayıt yok</i><i>Anonim</i></div>
+    </div>
+  </div>
+  <div class="cap">1024×500 — DevTools ile bu kutunun "Capture node screenshot"unu al · hazır PNG: mobile/androidapp/store/feature-1024x500.png</div>
+</body>
+</html>

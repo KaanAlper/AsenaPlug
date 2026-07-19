@@ -1,0 +1,37 @@
+name: Deploy Pages (docs)
+
+# GitHub Pages'i "GitHub Actions" kaynağıyla deploy eder — SADECE docs/ değişince.
+# (Branch-kaynaklı Pages'te yerleşik 'pages-build-deployment' HER main push'unda çalışıyordu;
+#  bu workflow path filtresiyle onun yerini alır -> alakasız commit'ler Pages'i tetiklemez.)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4
