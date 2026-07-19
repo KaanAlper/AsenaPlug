@@ -24,8 +24,9 @@
     background:radial-gradient(60% 40% at 82% -4%, var(--gold-soft), transparent 60%);}
   .wrap{position:relative;z-index:1;max-width:760px;margin:0 auto;padding:64px 24px 90px}
   header{display:flex;align-items:center;gap:14px;margin-bottom:8px}
-  .logo{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;
-    background:radial-gradient(circle at 50% 35%,var(--gold-2),var(--gold));color:#120C02;font-weight:800;font-size:20px}
+  .logo{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;overflow:hidden;
+    background:radial-gradient(circle at 50% 35%,#2A3340,#0B0E13)}
+  .logo img{width:34px;height:34px;object-fit:contain;display:block}
   h1{font-size:clamp(1.9rem,5vw,2.6rem);font-weight:800;letter-spacing:-.02em;margin:.2em 0 .1em}
   .brand{font-weight:800;font-size:20px;letter-spacing:-.01em}
   .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold)}
@@ -47,7 +48,7 @@
 <div class="wrap">
 
   <header>
-    <div class="logo">A</div>
+    <div class="logo"><img src="asena_logo.png" alt="AsenaPlug"></div>
     <div>
       <div class="kicker">AsenaPlug</div>
       <div class="brand">Gizlilik Politikası</div>
@@ -86,8 +87,10 @@
   <ul>
     <li><strong>VPN (BIND_VPN_SERVICE):</strong> Tüneli kurmak için — VPN'in temel işlevi.</li>
     <li><strong>İnternet:</strong> Cloudflare uç noktasına bağlanmak için.</li>
-    <li><strong>Açılışta başlat (isteğe bağlı):</strong> Yalnızca siz "Açılışta bağlan" seçeneğini
-      etkinleştirirseniz kullanılır.</li>
+    <li><strong>Bildirim (foreground servis):</strong> Bağlıyken kalıcı durum bildirimi göstermek ve
+      sistemin tüneli arka planda kapatmasını önlemek için. Kişisel veri içermez.</li>
+    <li><strong>Pil optimizasyonu muafiyeti (isteğe bağlı):</strong> Yalnızca siz izin verirseniz —
+      uyku modunda bağlantının düşmemesi için.</li>
   </ul>
 
   <h2>Üçüncü taraflar</h2>
@@ -103,7 +106,7 @@
   <p>Bu politikayı zaman zaman güncelleyebiliriz. Önemli değişikliklerde bu sayfadaki tarih yenilenir.</p>
 
   <h2>İletişim</h2>
-  <p>Sorularınız için: <a href="mailto:muammer@clonifylabs.com">muammer@clonifylabs.com</a></p>
+  <p>Sorularınız için: <a href="mailto:kaanalperkaraaslan@gmail.com">kaanalperkaraaslan@gmail.com</a></p>
 
   <hr class="lang-sep">
 
@@ -140,7 +143,10 @@
   <ul>
     <li><strong>VPN (BIND_VPN_SERVICE):</strong> to establish the tunnel — core VPN function.</li>
     <li><strong>Internet:</strong> to reach the Cloudflare endpoint.</li>
-    <li><strong>Start on boot (optional):</strong> used only if you enable "Connect on boot".</li>
+    <li><strong>Notification (foreground service):</strong> to show a persistent status notification
+      while connected and prevent the system from killing the tunnel in the background. No personal data.</li>
+    <li><strong>Battery optimization exemption (optional):</strong> only if you allow it — so the
+      connection isn't dropped during device sleep.</li>
   </ul>
 
   <h2>Third parties</h2>
@@ -156,7 +162,7 @@
   <p>We may update this policy from time to time. The date above is refreshed on material changes.</p>
 
   <h2>Contact</h2>
-  <p>Questions: <a href="mailto:muammer@clonifylabs.com">muammer@clonifylabs.com</a></p>
+  <p>Questions: <a href="mailto:kaanalperkaraaslan@gmail.com">kaanalperkaraaslan@gmail.com</a></p>
 
   <div class="foot">AsenaPlug · Cloudflare MASQUE tabanlı sansür-bypass · bozkurt</div>
 </div>
