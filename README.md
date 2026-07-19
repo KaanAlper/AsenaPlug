@@ -1,10 +1,10 @@
 # AsenaPlug
 
-**DPI / DNS censorship‑bypass over Cloudflare MASQUE (`usque`) — a system‑tray app for Windows and Linux, with per‑domain (blacklist) and full‑tunnel modes.**
+**DPI / DNS censorship‑bypass over Cloudflare MASQUE (`usque`) — a system‑tray app for Windows and Linux plus a native Android app, with per‑domain (blacklist) and full‑tunnel modes.**
 
 Traffic looks like ordinary HTTPS (MASQUE over HTTP/2 or HTTP/3), so it survives Turkish ISP DPI/throttling where WireGuard gets shaped. **Physical internet stays the default** — only the domains you list are tunneled, unless you pick full‑tunnel.
 
-🖥️ **Windows 10/11** · 🐧 **Linux — Arch & Debian families**  ·  🌍 5 languages (EN/DE/ES/FR/TR)  ·  🆓 MIT
+🖥️ **Windows 10/11** · 🐧 **Linux — Arch & Debian families** · 📱 **Android**  ·  🌍 5 languages (EN/DE/ES/FR/TR)  ·  🆓 MIT
 
 🇬🇧 [English](#english) · 🇹🇷 [Türkçe](#türkçe)
 
@@ -151,6 +151,22 @@ rm ~/.local/bin/asena-tray ~/.local/bin/discord
 
 ---
 
+### 📱 Android
+
+AsenaPlug is also a native Android app (Kotlin + Jetpack Compose, Go/`usque` core) — the same Cloudflare MASQUE tunnel in your pocket.
+
+- **Two modes** — *Everything* (all traffic tunneled) or *Selected sites* (only your blacklist goes through the tunnel; the rest stays full‑speed and direct).
+- **Anonymous** — an anonymous WARP key is created on‑device; no sign‑up, no logs, no tracking. Your site list stays on the phone.
+- **HTTP/2 & HTTP/3**, live speed test (tunnel vs direct), persistent foreground connection, Turkish/English, light/dark themes, 6 accent colors, first‑run guided tour.
+
+**Get it**
+- **Google Play** — closed testing (Alpha) for now; public release after the required 14‑day closed test.
+- **APK (sideload)** — grab `AsenaPlug.apk` from the latest [`android-v*` release](https://github.com/KaanAlper/AsenaPlug/releases).
+
+Build from source: see [`mobile/androidapp/BUILD.md`](mobile/androidapp/BUILD.md). Package id: `com.kaanalper.asenaplug`.
+
+---
+
 ### Architecture (Linux ↔ Windows)
 
 | Feature | Linux | Windows |
@@ -176,7 +192,7 @@ MIT — do whatever, no warranty.
 
 ## Türkçe
 
-**Cloudflare MASQUE (`usque`) üzerinden DPI / DNS sansür‑bypass — Windows ve Linux için sistem‑tepsisi uygulaması; alan‑bazlı (blacklist) ve tam‑tünel modlarıyla.**
+**Cloudflare MASQUE (`usque`) üzerinden DPI / DNS sansür‑bypass — Windows ve Linux için sistem‑tepsisi uygulaması, artı native bir Android uygulaması; alan‑bazlı (blacklist) ve tam‑tünel modlarıyla.**
 
 Trafik sıradan HTTPS gibi görünür (HTTP/2 ya da HTTP/3 üzerinden MASQUE), böylece WireGuard'ın throttle yediği TR DPI'sinde ayakta kalır. **Fiziksel internet varsayılan kalır** — tam‑tünel seçmedikçe yalnız listelediğin alan adları tünelden geçer.
 
@@ -316,6 +332,22 @@ rm ~/.local/bin/asena-tray ~/.local/bin/discord
 # asena-tray autostart satırını Hyprland config'inden elle sil
 ```
 `~/config.json` korunur — o kimliğe ihtiyacın yoksa sil.
+
+---
+
+### 📱 Android
+
+AsenaPlug artık native bir Android uygulaması da (Kotlin + Jetpack Compose, Go/`usque` çekirdek) — aynı Cloudflare MASQUE tüneli cebinde.
+
+- **İki mod** — *Her şey* (tüm trafik tünelde) veya *Seçili siteler* (yalnızca blacklist'in tünelden geçer; gerisi tam hızda doğrudan).
+- **Anonim** — cihazda anonim WARP anahtarı oluşturulur; kayıt yok, iz yok, takip yok. Site listen telefonunda kalır.
+- **HTTP/2 & HTTP/3**, canlı hız testi (tünel vs direkt), kalıcı foreground bağlantı, Türkçe/İngilizce, açık/koyu tema, 6 aksan rengi, ilk açılış tanıtım turu.
+
+**Nasıl edinilir**
+- **Google Play** — şimdilik kapalı test (Alpha); zorunlu 14 günlük kapalı testten sonra herkese açık.
+- **APK (sideload)** — en son [`android-v*` sürümünden](https://github.com/KaanAlper/AsenaPlug/releases) `AsenaPlug.apk` indir.
+
+Kaynaktan derleme: [`mobile/androidapp/BUILD.md`](mobile/androidapp/BUILD.md). Paket kimliği: `com.kaanalper.asenaplug`.
 
 ---
 
