@@ -29,8 +29,8 @@ $V6Rule        = "AsenaPlug-IPv6-FailClosed"
 # Cache PIN (asena-on) tarayıcı/route-sync uyuşmazlığını çözer; route-sync artık
 # sadece rotasyon/yeni IP bakımı yapar. Interval kısa -> yeni CDN IP'leri hızla
 # yakalanır. Cache pinli olduğundan çoğu çözüm dnsproxy cache'ine düşer (ucuz).
-$SleepSeconds  = 3      # kısa interval -> taze/rotasyon IP'leri hızla route'lanır (boşluk küçük)
-$PruneAfter    = 1200   # ~1 saat (3sn x 1200); oturum boyunca IP'ler birikir
+$PruneAfter    = 600    # ~1 saat (6sn x 600); oturum boyunca IP'ler birikir
+$SleepSeconds  = 6
 # dnsproxy watchdog (selective modda sistem DNS 127.0.0.2'ye bağlı; dnsproxy
 # ölürse internet gider — ölmüşse yeniden başlat)
 $DnsproxyExe   = Join-Path (Join-Path $env:ProgramFiles "AsenaPlug") "dnsproxy.exe"
@@ -129,21 +129,6 @@ while ($true) {
                 $desiredV4[$ip] = $true
             } elseif ($a.AddressFamily -eq 'InterNetworkV6') {
                 [void]$v6set.Add($ip)
-            }
-        }
-    }
-
-    # TARAYICININ GERÇEKTEN çözdüğü IP'ler: Windows DNS cache'inde blacklist'e uyan (apex
-    # VEYA subdomain) A kayıtlarını da route'a ekle. Bağımsız resolve i.nhentai.net gibi
-    # subdomain'leri kaçırıyordu (blacklist'te sadece apex olsa da) + CDN rotasyonunda
-    # tarayıcı farklı IP alıyordu -> "img 12 gelir 13 gelmez ~20s" boşluğu. Cache =
-    # tarayıcının ALDIĞI IP -> hem subdomain hem rotasyon kapsanır (Linux nftset'e yakın).
-    Get-DnsClientCache -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq 1 } | ForEach-Object {
-        $name = "$($_.Entry)".ToLower().TrimEnd('.')
-        $cip  = "$($_.Data)".Trim()
-        if ($cip -match '^\d{1,3}(\.\d{1,3}){3}$') {
-            foreach ($d in $domains) {
-                if ($name -eq $d -or $name.EndsWith(".$d")) { $desiredV4[$cip] = $true; break }
             }
         }
     }
