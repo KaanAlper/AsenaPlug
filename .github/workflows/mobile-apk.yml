@@ -1,23 +1,37 @@
 name: Android — APK Release + AAB (private) + Play
 
-# Her mobile/androidapp değişiminde İMZALI release APK + AAB üretir (upload key = secret):
-#  - APK  -> GitHub RELEASE'e DİREKT dosya (AsenaPlug.apk, zip yok, herkes tek tık indirir)
-#  - AAB  -> PRIVATE artifact (Play bundle; sadece repo erişimi olan indirir, public DEĞİL)
-#  - AAB  -> PLAY_SERVICE_ACCOUNT_JSON secret'ı VARSA Play 'internal' track'e otomatik yüklenir
-#            (yoksa adım sessizce atlanır -> Play hazır olunca secret ekle, aktifleşir).
+# YAYIN = git TAG 'android-v*' (Windows 'v*' tag'iyle ÇAKIŞMAZ — namespace ayrı; biri "a" ile başlar).
+#
+#   Yeni sürüm:  git tag android-v1.2.0 && git push --tags     ->  versionName=1.2.0
+#
+#   Tag push'ta (android-v1.2.0):
+#     - İMZALI release APK + AAB üretilir
+#     - APK -> PUBLIC GitHub Release (repo open-source). prerelease=true + make_latest=false:
+#             Windows updater /releases/latest'i kullanır -> prerelease oraya GİRMEZ ->
+#             Android release'i Windows self-update'ini BOZMAZ, release listesi karışmaz.
+#     - AAB -> PRIVATE artifact (Play bundle; sadece repo erişimi olan indirir, public DEĞİL)
+#     - AAB -> Play 'alpha' track'ine (PLAY_SERVICE_ACCOUNT_JSON secret'ı varsa)
+#
+#   Manuel test build (Actions > Run workflow): Play'e/Release'e DOKUNMAZ (varsayılan).
+#     version input verirsin -> APK+AAB private artifact olarak iner. publish=true -> Play'e de gider.
+#
+# Sıradan mobile/androidapp push'ları artık build TETİKLEMEZ (tekrarlı sürüm yığılması biter).
 # İmza secret'ları: ANDROID_KEYSTORE_BASE64 / _PASSWORD / KEY_ALIAS / KEY_PASSWORD.
 # Aar repoda hazır (app/libs) -> gomobile/NDK GEREKMEZ, sadece gradle.
-# Release 'android-v...' tag'i + "AsenaPlug Android" başlığı + PRERELEASE:
-#   Windows updater /releases/latest'i kullanıyor; prerelease oraya GİRMEZ ->
-#   Android release'leri Windows self-update'ini bozmaz, release listesi karışmaz.
+# versionCode = github.run_number (benzersiz+artan; global sayaç tag'de de artar). versionName = tag'den.
 
 on:
   push:
-    paths:
-      - 'mobile/androidapp/**'
-      - '!mobile/androidapp/fastlane/**'   # Play listing metadata app'i etkilemez -> build tetikleme
-      - '.github/workflows/mobile-apk.yml'
-  workflow_dispatch:
+    tags: ['android-v*']       # YALNIZCA Android sürüm tag'lerinde (Windows 'v*' ile çakışmaz)
+  workflow_dispatch:           # manuel test build (varsayılan Play'e/Release'e DOKUNMAZ)
+    inputs:
+      version:
+        description: 'Sürüm adı (ör. 1.2.0)'
+        required: false
+      publish:
+        description: "Play alpha track'ine de yükle (manuel build için)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write          # release + tag oluşturmak için
@@ -61,13 +75,26 @@ jobs:
             echo "::warning::ANDROID_KEYSTORE_BASE64 yok -> release imzasız (Play yüklenemez)"
           fi
 
+      - name: Sürümü belirle (tag ya da manuel input)
+        id: ver
+        run: |
+          # tag push: android-v1.2.0 -> 1.2.0 ; manuel: input; ikisi de yoksa dev fallback
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VN="${GITHUB_REF_NAME#android-v}"
+          else
+            VN="${{ github.event.inputs.version }}"
+          fi
+          [ -z "$VN" ] && VN="0.0.0-dev"
+          echo "vn=$VN" >> "$GITHUB_OUTPUT"
+          echo "Sürüm adı: $VN"
+
       - name: Build (İMZALI release APK + AAB)
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_VERSION_CODE: ${{ github.run_number }}
-          ANDROID_VERSION_NAME: 1.0.${{ github.run_number }}
+          ANDROID_VERSION_NAME: ${{ steps.ver.outputs.vn }}
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace
@@ -75,25 +102,28 @@ jobs:
       - name: APK'yı temiz adlandır (AsenaPlug.apk)
         run: cp app/build/outputs/apk/release/app-release.apk AsenaPlug.apk
 
-      - name: Android Release (SADECE APK — public, direkt indir)
+      - name: Android Release (SADECE tag'de — APK public, prerelease)
+        if: ${{ github.ref_type == 'tag' }}   # dispatch test build public release YARATMAZ
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: android-v1.0.${{ github.run_number }}
-          name: AsenaPlug Android v1.0.${{ github.run_number }}
+          tag_name: ${{ github.ref_name }}     # zaten push'lanan tag (android-v1.2.0)
+          name: AsenaPlug Android v${{ steps.ver.outputs.vn }}
           prerelease: true            # /releases/latest'e girmez -> Windows updater güvende
           make_latest: "false"
           files: mobile/androidapp/AsenaPlug.apk
           generate_release_notes: true
 
-      - name: AAB — PRIVATE artifact (Play Store; sadece repo erişimi olan indirir)
+      - name: APK + AAB — PRIVATE artifact (test build indir / Play bundle)
         uses: actions/upload-artifact@v4
         with:
-          name: asenaplug-aab-private
-          path: mobile/androidapp/app/build/outputs/bundle/release/*.aab
+          name: asenaplug-apk-aab-private
+          path: |
+            mobile/androidapp/AsenaPlug.apk
+            mobile/androidapp/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
-      - name: Play Store'a yükle (kapalı beta track) — SADECE service account secret'ı varsa
-        if: ${{ env.PLAY_SA_JSON != '' }}
+      - name: Play Store'a yükle (alpha track) — SADECE tag ya da publish=true
+        if: ${{ env.PLAY_SA_JSON != '' && (github.ref_type == 'tag' || github.event.inputs.publish == 'true') }}
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
