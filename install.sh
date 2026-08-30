@@ -338,33 +338,35 @@ else
 fi
 
 
-# --- COLD-START ISITMA (kritik) ---
-# Taze tunelde HER YENI blacklist host'unun ILK baglantisi ~8sn soguk (SYN kaybi + nftset
-# yarisi). Discord mesajlari gateway.discord.gg (WSS) + api'den, resimler cdn/media'dan gelir
-# -> app acilinca bu host'lar SOGUK -> "ilk acilista mesaj gelmiyor, 10x retry". Cozum:
-# baglaninca (1) tum blacklist'i onden coz (nftset dolsun), (2) Discord host'larini defalarca
-# ISIT (soguk baglantilari kullanici yerine biz yiyelim), (3) ~30sn'de bir sicak tut.
-# asena-off usque'yu oldururunce dongu kendiliginden biter.
-WARM_HOSTS="gateway.discord.gg discord.com api.discord.com cdn.discordapp.com media.discordapp.net"
+# --- COLD-START ISITMA (GENEL — tum blacklist; Linux'ta canli KANITLANDI 2026-08-30) ---
+# Taze QUIC tunelde HER YENI hedef IP'nin ILK baglantisi ~3-4sn soguk (SYN kaybi+RTO); o IP
+# isininca 0.01s. Blacklist siteleri (Discord/nhentai/4chan...) CDN'de DONEN IP havuzu kullanir
+# -> app acilinca isitilmamis IP'lere baglanip SYN-SENT'te TAKILIR -> "ilk acilista yuklenmiyor,
+# retry" (kanit: Discord havuzu isitilinca SYN-SENT'ler 0.01s'e dustu). TEK host isitmak YETMEZ
+# (Cloudflare her sorguda farkli IP). COZUM: baglaninca TUM blacklist domainlerini coz, TUM IP
+# havuzunu topla, HER IP'yi isit (TCP+TLS handshake = o IP'nin cold-start'ini yut; nftset'i de
+# doldurur). ~30sn'de bir havuzu tazele, ~5dk'da bir yeniden coz (rotasyon). Additive/hata-yutan.
 BL_FILE="$USER_HOME/.config/asena-blacklist.txt"
+POOL_FILE="$RUN_DIR/warm-pool.txt"
+resolve_pool() {
+  [ -f "$BL_FILE" ] || return
+  sed -e 's/#.*//' -e 's/\r//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^\*\.//' -e 's/\.$//' "$BL_FILE" \
+    | grep -F '.' \
+    | xargs -r -P 40 -I{} getent ahostsv4 {} 2>/dev/null \
+    | awk '{print $1}' | sort -u > "$POOL_FILE.tmp" 2>/dev/null && mv "$POOL_FILE.tmp" "$POOL_FILE" 2>/dev/null
+}
+warm_pool() {
+  [ -s "$POOL_FILE" ] || return
+  xargs -r -P 60 -I{} curl -4 -sk -o /dev/null --max-time 6 --resolve "w:443:{}" "https://w/" < "$POOL_FILE" 2>/dev/null || true
+}
 (
-  # 1) Discord host'larini ONCE ve defalarca isit (kullanicinin asil derdi)
-  for _ in $(seq 1 6); do
-    for h in $WARM_HOSTS; do curl -4 -s -o /dev/null --max-time 8 "https://$h/" 2>/dev/null || true; done
-  done
-  # 2) Tum blacklist'i onden coz -> nftset dolsun -> diger siteler de ilk seferde acilsin
-  if [ -f "$BL_FILE" ]; then
-    while IFS= read -r d; do
-      d="${d%%#*}"; d="${d#\*.}"; d="${d// /}"; d="${d%.}"
-      case "$d" in *.*) getent ahostsv4 "$d" >/dev/null 2>&1 || true ;; esac
-    done < "$BL_FILE"
-  fi
-  # 3) Sicak tut (idle'da / reconnect sonrasi cold-start geri gelmesin)
+  resolve_pool          # tum blacklist -> IP havuzu (nftset de dolar)
+  warm_pool; warm_pool  # havuzu 2x isit (cold-start yut)
+  n=0
   while pgrep -x usque >/dev/null 2>&1; do
-    for h in gateway.discord.gg discord.com cdn.discordapp.com; do
-      curl -4 -s -o /dev/null --max-time 6 "https://$h/" 2>/dev/null || true
-    done
     sleep 30
+    warm_pool                                           # cached havuzu tazele (ucuz)
+    n=$((n+1)); [ $((n % 10)) -eq 0 ] && resolve_pool   # ~5dk'da bir yeniden coz
   done
 ) >/dev/null 2>&1 &
 

@@ -170,25 +170,38 @@ class AsenaVpnService : VpnService() {
      */
     private fun warmUpTunnel() {
         Thread {
-            val hosts = listOf(
+            // GENEL: kullanıcının blacklist'i (DomainStore) + Discord (her modda garanti — full
+            // modda liste boş olabilir). Tek host ısıtmak YETMEZ (CDN dönen IP havuzu); tüm listeyi
+            // ısıtınca havuzun geneli sıcak olur. Paralel (thread pool) -> telefonda hızlı biter.
+            val discord = listOf(
                 "gateway.discord.gg", "discord.com", "api.discord.com",
                 "cdn.discordapp.com", "media.discordapp.net"
             )
-            fun hit(h: String, t: Int) {
+            val hosts = (DomainStore.domains.value
+                .map { it.removePrefix("*.").trim().trimEnd('.') }
+                .filter { it.contains(".") } + discord).distinct()
+            fun warmAll(t: Int) {
+                val pool = java.util.concurrent.Executors.newFixedThreadPool(12)
                 try {
-                    val c = java.net.URL("https://$h/").openConnection() as java.net.HttpURLConnection
-                    c.connectTimeout = t; c.readTimeout = t; c.instanceFollowRedirects = false
-                    c.responseCode          // bağlantıyı kur (TLS handshake = cold-start burada yenilir)
-                    c.disconnect()
-                } catch (_: Exception) {}
+                    pool.invokeAll(hosts.map { h ->
+                        java.util.concurrent.Callable {
+                            try {
+                                val c = java.net.URL("https://$h/").openConnection() as java.net.HttpURLConnection
+                                c.connectTimeout = t; c.readTimeout = t; c.instanceFollowRedirects = false
+                                c.responseCode          // bağlantıyı kur (TLS handshake = cold-start yenilir)
+                                c.disconnect()
+                            } catch (_: Exception) {}
+                        }
+                    })
+                } catch (_: Exception) {} finally { pool.shutdownNow() }
             }
             // 1) agresif ilk ısıtma (cold-start penceresini yut)
-            repeat(6) { for (h in hosts) hit(h, 8000) }
+            repeat(2) { warmAll(8000) }
             // 2) sıcak tut (~12dk; sonra app'in kendi trafiği ayakta tutar). Tünel kapanınca çık.
             repeat(30) {
                 try { Thread.sleep(25_000) } catch (_: InterruptedException) { return@Thread }
                 if (TunnelState.status.value != TunnelStatus.ON) return@Thread
-                for (h in hosts.take(3)) hit(h, 6000)
+                warmAll(6000)
             }
         }.apply { isDaemon = true }.start()
     }

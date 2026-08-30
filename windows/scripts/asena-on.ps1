@@ -394,33 +394,44 @@ $state = [ordered]@{
 $state | ConvertTo-Json -Compress -Depth 4 | Set-Content -Path $StateFile -Encoding UTF8
 Write-Log "asena-on OK | $transport/$scope | pid=$usquePid | pins=$($pins -join ',')"
 
-# --- COLD-START WARM-UP (Linux'ta CANLI KANITLANDI, 2026-08-30) ---
-# Taze QUIC/MASQUE tüneli HER YENİ host'a İLK bağlantıda ~8sn soğuk (SYN kaybı; o host
-# ısınınca <0.1s). Discord mesajı=gateway.discord.gg, resim=cdn/media -> app açılınca hepsi
-# soğuk -> "ilk açılışta mesaj gelmiyor, 10x retry". Çözüm: bağlanınca ARKA PLANDA bu host'ları
-# defalarca ısıt (soğuk bağlantıları kullanıcı yerine biz yiyelim) + bir süre sıcak tut.
-# route-sync route'ları async ekler; warm-up tekrar deneyerek route gelince ısıtır. Additive:
-# başarısız istekler zararsız (yut), mevcut routing'e DOKUNMAZ. Job ~13dk sonra kendi biter.
-$warmHosts = @("gateway.discord.gg","discord.com","api.discord.com","cdn.discordapp.com","media.discordapp.net")
+# --- COLD-START WARM-UP (GENEL — tüm blacklist, HER MOD; Linux'ta CANLI KANITLANDI 2026-08-30) ---
+# Taze QUIC/MASQUE tüneli bağlandıktan sonra ilk ~40sn SOĞUK: yeni hedef IP'lerin SYN'i düşüp
+# RTO bekliyor (3-4sn), o IP ısınınca 0.01s. Blacklist siteleri (Discord/...) CDN'de DÖNEN IP
+# havuzu kullanır -> app açılınca ısıtılmamış IP'lere bağlanıp SYN-SENT'te TAKILIR -> "ilk açılışta
+# yüklenmiyor, retry" (kanıt: havuz ısıtılınca 0.01s'e düştü, SYN-SENT gitti). ÇÖZÜM: bağlanınca
+# BLACKLIST'i çöz (full modda /32 route YOK -> route yerine dosyayı çöz; selective+full ikisinde
+# çalışır), tüm IP havuzunu topla, her IP'ye paralel TCP connect (SYN=cold-start yut). ~5dk'da bir
+# yeniden çöz (rotasyon). Additive/zararsız. Job ~20dk sonra kendi biter (app trafiği sıcak tutar).
 try {
+    $blFile = $BlacklistTxt
     Start-Job -ScriptBlock {
-        param($hosts)
-        $ProgressPreference = "SilentlyContinue"
-        # 1) agresif ilk ısıtma (cold-start penceresini yut)
-        for ($r = 0; $r -lt 6; $r++) {
-            foreach ($h in $hosts) {
-                try { Invoke-WebRequest -Uri "https://$h/" -TimeoutSec 8 -UseBasicParsing -MaximumRedirection 0 -ErrorAction SilentlyContinue | Out-Null } catch {}
+        param($blPath)
+        function Get-PoolIps($path) {
+            if (-not (Test-Path $path)) { return @() }
+            $doms = Get-Content $path -ErrorAction SilentlyContinue |
+                ForEach-Object { ($_ -replace '#.*','').Trim().TrimStart('*').TrimStart('.').TrimEnd('.') } |
+                Where-Object { $_ -match '\.' } | Select-Object -Unique
+            $ips = @{}
+            foreach ($d in $doms) {
+                try { foreach ($a in (Resolve-DnsName -Name $d -Type A -ErrorAction SilentlyContinue)) {
+                        if ("$($a.IPAddress)" -match '^\d+\.\d+\.\d+\.\d+$') { $ips["$($a.IPAddress)"] = $true }
+                } } catch {}
             }
+            return @($ips.Keys)
         }
-        # 2) sıcak tut (~12dk; sonra app'in kendi trafiği ayakta tutar)
-        for ($r = 0; $r -lt 30; $r++) {
-            Start-Sleep -Seconds 25
-            foreach ($h in $hosts[0..2]) {
-                try { Invoke-WebRequest -Uri "https://$h/" -TimeoutSec 6 -UseBasicParsing -MaximumRedirection 0 -ErrorAction SilentlyContinue | Out-Null } catch {}
+        $pool = Get-PoolIps $blPath                       # havuzu bir kez çöz (cache)
+        for ($r = 0; $r -lt 60; $r++) {
+            $clients = @()
+            foreach ($ip in $pool) {
+                try { $c = New-Object System.Net.Sockets.TcpClient; [void]$c.BeginConnect($ip, 443, $null, $null); $clients += $c } catch {}
             }
+            Start-Sleep -Seconds 6
+            foreach ($c in $clients) { try { $c.Close() } catch {} }
+            Start-Sleep -Seconds 20
+            if ($r % 12 -eq 11) { $pool = Get-PoolIps $blPath }   # ~5dk'da bir yeniden çöz (rotasyon)
         }
-    } -ArgumentList (,$warmHosts) | Out-Null
-    Write-Log "cold-start warm-up job başlatıldı (Discord host'ları ısıtılıyor)"
+    } -ArgumentList $blFile | Out-Null
+    Write-Log "cold-start warm-up job başlatıldı (tüm blacklist havuzu, her mod)"
 } catch { Write-Log "warm-up job başlatılamadı (kritik değil): $_" }
 
 }
