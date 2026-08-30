@@ -146,6 +146,7 @@ class AsenaVpnService : VpnService() {
                         Log.i(TAG, "full-tünel çekirdek başladı (fd=$fd, http2=$http2)")
                     }
                     TunnelState.status.value = TunnelStatus.ON
+                    warmUpTunnel()   // cold-start ısıtma (Discord ilk açılışta mesaj gelsin)
                     val modeText = if (selectiveMode) "Seçili siteler tünelde" else "Tüm trafik korumada"
                     ensureForeground("Korumadasın · $modeText")
                 } catch (e: Exception) {
@@ -157,6 +158,39 @@ class AsenaVpnService : VpnService() {
             Log.e(TAG, "startTunnel hata: ${e.message}", e)
             fail()
         }
+    }
+
+    /**
+     * COLD-START ISITMA (Linux'ta canlı kanıtlandı, 2026-08-30). Taze QUIC/MASQUE tüneli HER
+     * YENİ host'a İLK bağlantıda ~8sn soğuk (SYN kaybı; o host ısınınca <0.1s). Discord mesajı=
+     * gateway.discord.gg, resim=cdn/media -> app açılınca hepsi soğuk -> "ilk açılışta mesaj
+     * gelmiyor, retry". Çözüm: bağlanır bağlanmaz arka planda bu host'ları defalarca ısıt (soğuk
+     * bağlantıları kullanıcı yerine biz yiyelim) + bir süre sıcak tut. API33+ (excludeRoute) app
+     * trafiği tünelden geçtiği için ısıtır. Additive/zararsız: hatalar yutulur, tünel kapanınca biter.
+     */
+    private fun warmUpTunnel() {
+        Thread {
+            val hosts = listOf(
+                "gateway.discord.gg", "discord.com", "api.discord.com",
+                "cdn.discordapp.com", "media.discordapp.net"
+            )
+            fun hit(h: String, t: Int) {
+                try {
+                    val c = java.net.URL("https://$h/").openConnection() as java.net.HttpURLConnection
+                    c.connectTimeout = t; c.readTimeout = t; c.instanceFollowRedirects = false
+                    c.responseCode          // bağlantıyı kur (TLS handshake = cold-start burada yenilir)
+                    c.disconnect()
+                } catch (_: Exception) {}
+            }
+            // 1) agresif ilk ısıtma (cold-start penceresini yut)
+            repeat(6) { for (h in hosts) hit(h, 8000) }
+            // 2) sıcak tut (~12dk; sonra app'in kendi trafiği ayakta tutar). Tünel kapanınca çık.
+            repeat(30) {
+                try { Thread.sleep(25_000) } catch (_: InterruptedException) { return@Thread }
+                if (TunnelState.status.value != TunnelStatus.ON) return@Thread
+                for (h in hosts.take(3)) hit(h, 6000)
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     /** config JSON'dan Cloudflare endpoint IPv4'lerini çıkar (tünel dışında tutulacaklar). */

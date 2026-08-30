@@ -394,6 +394,35 @@ $state = [ordered]@{
 $state | ConvertTo-Json -Compress -Depth 4 | Set-Content -Path $StateFile -Encoding UTF8
 Write-Log "asena-on OK | $transport/$scope | pid=$usquePid | pins=$($pins -join ',')"
 
+# --- COLD-START WARM-UP (Linux'ta CANLI KANITLANDI, 2026-08-30) ---
+# Taze QUIC/MASQUE tüneli HER YENİ host'a İLK bağlantıda ~8sn soğuk (SYN kaybı; o host
+# ısınınca <0.1s). Discord mesajı=gateway.discord.gg, resim=cdn/media -> app açılınca hepsi
+# soğuk -> "ilk açılışta mesaj gelmiyor, 10x retry". Çözüm: bağlanınca ARKA PLANDA bu host'ları
+# defalarca ısıt (soğuk bağlantıları kullanıcı yerine biz yiyelim) + bir süre sıcak tut.
+# route-sync route'ları async ekler; warm-up tekrar deneyerek route gelince ısıtır. Additive:
+# başarısız istekler zararsız (yut), mevcut routing'e DOKUNMAZ. Job ~13dk sonra kendi biter.
+$warmHosts = @("gateway.discord.gg","discord.com","api.discord.com","cdn.discordapp.com","media.discordapp.net")
+try {
+    Start-Job -ScriptBlock {
+        param($hosts)
+        $ProgressPreference = "SilentlyContinue"
+        # 1) agresif ilk ısıtma (cold-start penceresini yut)
+        for ($r = 0; $r -lt 6; $r++) {
+            foreach ($h in $hosts) {
+                try { Invoke-WebRequest -Uri "https://$h/" -TimeoutSec 8 -UseBasicParsing -MaximumRedirection 0 -ErrorAction SilentlyContinue | Out-Null } catch {}
+            }
+        }
+        # 2) sıcak tut (~12dk; sonra app'in kendi trafiği ayakta tutar)
+        for ($r = 0; $r -lt 30; $r++) {
+            Start-Sleep -Seconds 25
+            foreach ($h in $hosts[0..2]) {
+                try { Invoke-WebRequest -Uri "https://$h/" -TimeoutSec 6 -UseBasicParsing -MaximumRedirection 0 -ErrorAction SilentlyContinue | Out-Null } catch {}
+            }
+        }
+    } -ArgumentList (,$warmHosts) | Out-Null
+    Write-Log "cold-start warm-up job başlatıldı (Discord host'ları ısıtılıyor)"
+} catch { Write-Log "warm-up job başlatılamadı (kritik değil): $_" }
+
 }
 catch {
     # Routing/state kurulumu YARIDA kaldı. usque'yu BU script başlattıysa: çalışan-ama-

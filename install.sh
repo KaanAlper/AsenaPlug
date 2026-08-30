@@ -177,6 +177,7 @@ case "$SCOPE" in
     selective|full) ;;
     *) echo "Usage: asena-on [http2|http3] [selective|full]" >&2; exit 2 ;;
 esac
+PORT="${3:-443}"; case "$PORT" in ""|*[!0-9]*) echo "port sayi olmali" >&2; exit 2;; esac
 
 MASQUE_IP="162.159.198.2"
 CF_RANGE="162.159.192.0/19"   # MASQUE/WARP endpoint infra — full modda fiziksel'de pinli (loop yok)
@@ -210,7 +211,7 @@ if ! pgrep -x usque >/dev/null; then
     cd "$USQUE_DIR"
     nohup usque -c "$USQUE_CONFIG" nativetun \
         --always-reconnect \
-        --keepalive-period 15s \
+        --keepalive-period 15s -P "$PORT" \
         $PROTO_FLAGS \
         >/var/log/usque.log 2>&1 &
     for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -335,6 +336,37 @@ if command -v resolvectl >/dev/null 2>&1; then
 else
     echo "UYARI: resolvectl yok (systemd-resolved gerekli) -> selective DNS atlandi." >&2
 fi
+
+
+# --- COLD-START ISITMA (kritik) ---
+# Taze tunelde HER YENI blacklist host'unun ILK baglantisi ~8sn soguk (SYN kaybi + nftset
+# yarisi). Discord mesajlari gateway.discord.gg (WSS) + api'den, resimler cdn/media'dan gelir
+# -> app acilinca bu host'lar SOGUK -> "ilk acilista mesaj gelmiyor, 10x retry". Cozum:
+# baglaninca (1) tum blacklist'i onden coz (nftset dolsun), (2) Discord host'larini defalarca
+# ISIT (soguk baglantilari kullanici yerine biz yiyelim), (3) ~30sn'de bir sicak tut.
+# asena-off usque'yu oldururunce dongu kendiliginden biter.
+WARM_HOSTS="gateway.discord.gg discord.com api.discord.com cdn.discordapp.com media.discordapp.net"
+BL_FILE="$USER_HOME/.config/asena-blacklist.txt"
+(
+  # 1) Discord host'larini ONCE ve defalarca isit (kullanicinin asil derdi)
+  for _ in $(seq 1 6); do
+    for h in $WARM_HOSTS; do curl -4 -s -o /dev/null --max-time 8 "https://$h/" 2>/dev/null || true; done
+  done
+  # 2) Tum blacklist'i onden coz -> nftset dolsun -> diger siteler de ilk seferde acilsin
+  if [ -f "$BL_FILE" ]; then
+    while IFS= read -r d; do
+      d="${d%%#*}"; d="${d#\*.}"; d="${d// /}"; d="${d%.}"
+      case "$d" in *.*) getent ahostsv4 "$d" >/dev/null 2>&1 || true ;; esac
+    done < "$BL_FILE"
+  fi
+  # 3) Sicak tut (idle'da / reconnect sonrasi cold-start geri gelmesin)
+  while pgrep -x usque >/dev/null 2>&1; do
+    for h in gateway.discord.gg discord.com cdn.discordapp.com; do
+      curl -4 -s -o /dev/null --max-time 6 "https://$h/" 2>/dev/null || true
+    done
+    sleep 30
+  done
+) >/dev/null 2>&1 &
 
 printf '%s\n' "$SCOPE" > "$RUN_DIR/scope" 2>/dev/null || true   # tray current_scope() bunu okur
 echo "Asena on ($MODE/$SCOPE) gw=$GW dev=$DEV user=$USER_NAME asena_iface=$IFACE_COUNT slice=${SLICE_REL_PATH:-?}"
