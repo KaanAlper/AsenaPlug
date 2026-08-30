@@ -6,13 +6,13 @@ plugins {
 
 android {
     namespace = "asena.plug"
-    compileSdk = 35
-    buildToolsVersion = "35.0.0"
+    compileSdk = 36
+    buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "com.kaanalper.asenaplug"   // Play paket kimliği (namespace=asena.plug kaynak paketi ayrı)
         minSdk = 26
-        targetSdk = 35   // Play zorunluluğu (Android 15); edge-to-edge zaten setDecorFitsSystemWindows(false)+systemBarsPadding
+        targetSdk = 36   // Play zorunluluğu (Android 16; 31 Ağu 2026'dan sonra 36 şart); edge-to-edge zaten setDecorFitsSystemWindows(false)+systemBarsPadding
         // CI her build'de artırır (Play aynı versionCode'u reddeder); yerelde 1.
         versionCode = (System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull()) ?: 1
         versionName = System.getenv("ANDROID_VERSION_NAME") ?: "0.1-poc"

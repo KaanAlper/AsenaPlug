@@ -46,10 +46,10 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
-      - name: SDK bileşenleri (platform 35 + build-tools 35)
+      - name: SDK bileşenleri (platform 36 + build-tools 36 — targetSdk 36 için)
         run: |
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" >/dev/null
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null
 
       - name: local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
