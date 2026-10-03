@@ -46,13 +46,19 @@ Traffic looks like ordinary HTTPS (MASQUE over HTTP/2 or HTTP/3), so it survives
 
 #### Install / Update
 
-**Recommended — download the exe:**
+**Recommended — one line in PowerShell** (no admin window needed; Windows asks for permission once):
+```powershell
+irm https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.ps1 | iex
+```
+It downloads the latest `AsenaPlug.exe`, checks its SHA‑256, lets it set itself up in `C:\Program Files\AsenaPlug\`, and adds a Start menu shortcut plus an **Apps & Features** entry with an uninstaller. Run the same line again to update — a running AsenaPlug is disconnected cleanly first, and a failed update puts the previous version back. Log: `%TEMP%\AsenaPlug-install.log`.
+
+**Or download the exe:**
 1. Grab `AsenaPlug.exe` from the [latest release](https://github.com/KaanAlper/AsenaPlug/releases/latest).
 2. Run it → **UAC** prompt → automatic first‑time setup → tray icon appears.
 
 On first run the exe **copies itself to `C:\Program Files\AsenaPlug\`**, makes a **desktop shortcut**, and starts at logon from there — so you can delete the download. Only one tray runs at a time.
 
-**Auto‑update:** the tray checks GitHub Releases (menu → *Check for updates*, plus a silent daily check). New versions download with a progress popup and self‑install — no manual steps. CI builds a fresh signed‑ready exe on every push to `main`.
+**Auto‑update:** the tray checks GitHub Releases (menu → *Check for updates*, plus a silent daily check). New versions download with a progress popup and self‑install — no manual steps. CI builds and tests the exe on every Windows change; a release is published from **Actions › Release Windows EXE** (the version follows the commits since the last release: `feat:` minor, `fix:` patch, a `!` after the type or a breaking-change footer major).
 
 > **SmartScreen** ("Windows protected your PC") is expected for any *unsigned* open‑source exe — not a bug, not fixable in code. Click **More info → Run anyway**, or `Unblock-File` the download. Free [SignPath OSS](https://signpath.org/open-source) signing is wired into the CI (skipped until you add the `SIGNPATH_*` secrets); a local certificate signs directly via `build.ps1 -CertThumbprint <thumbprint>`. The build already embeds proper version/publisher metadata so UAC shows **AsenaPlug** even while unsigned.
 
@@ -89,7 +95,11 @@ First run (admin) sets up: binaries + PowerShell scripts → `C:\Program Files\A
 - **Kill‑switch:** a WFP prototype exists in `windows/killswitch/` (Go) but is **disabled** — its filter blocked tunneled traffic; kept for a future Windows‑verified version.
 
 #### Uninstall (Windows)
-Admin PowerShell — tears down cleanly (NRPT, IPv6 firewall, routes, DNS) then removes tasks/shortcut/files:
+**Settings › Apps › AsenaPlug** (installed with the one‑liner), or:
+```powershell
+$env:ASENAPLUG_UNINSTALL = 1; irm https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.ps1 | iex
+```
+Both tear the tunnel down first and keep your `config.json` identity (add `$env:ASENAPLUG_PURGE = 1` to wipe it too). Manually, from an admin PowerShell — tears down cleanly (NRPT, IPv6 firewall, routes, DNS) then removes tasks/shortcut/files:
 ```powershell
 & "C:\Program Files\AsenaPlug\scripts\asena-uninstall.ps1"
 ```
@@ -230,13 +240,19 @@ Trafik sıradan HTTPS gibi görünür (HTTP/2 ya da HTTP/3 üzerinden MASQUE), b
 
 #### Kurulum / Güncelleme
 
-**Önerilen — exe'yi indir:**
+**Önerilen — PowerShell'de tek satır** (yönetici penceresi gerekmez; Windows bir kez izin ister):
+```powershell
+irm https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.ps1 | iex
+```
+Son `AsenaPlug.exe`'yi indirir, SHA‑256'sını doğrular, `C:\Program Files\AsenaPlug\`'a kendini kurdurur, Başlat menüsü kısayolu ve kaldırıcısıyla birlikte **Uygulamalar** kaydı ekler. Güncellemek için aynı satırı yeniden çalıştır — açık AsenaPlug önce düzgünce bağlantıyı keser, başarısız bir güncelleme önceki sürümü geri koyar. Günlük: `%TEMP%\AsenaPlug-install.log`.
+
+**Ya da exe'yi indir:**
 1. [Son sürümden](https://github.com/KaanAlper/AsenaPlug/releases/latest) `AsenaPlug.exe`'yi indir.
 2. Çalıştır → **UAC** → otomatik ilk kurulum → tepsi ikonu belirir.
 
 İlk çalıştırmada exe **kendini `C:\Program Files\AsenaPlug\`'a kopyalar**, **masaüstü kısayolu** yapar ve logon'da oradan başlar — indirilen dosyayı silebilirsin. Aynı anda tek tray çalışır.
 
-**Otomatik güncelleme:** tray GitHub Releases'i denetler (menü → *Güncellemeleri denetle* + sessiz günlük denetim). Yeni sürüm ilerleme penceresiyle iner ve kendini kurar — elle adım yok. CI, `main`'e her push'ta yeni exe üretir.
+**Otomatik güncelleme:** tray GitHub Releases'i denetler (menü → *Güncellemeleri denetle* + sessiz günlük denetim). Yeni sürüm ilerleme penceresiyle iner ve kendini kurar — elle adım yok. CI her Windows değişikliğinde exe'yi derleyip test eder; sürüm **Actions › Release Windows EXE** ile yayımlanır (numara son sürümden bu yana gelen commit'lerden gelir: `feat:` minor, `fix:` patch, tipten sonra `!` ya da breaking-change footer'ı major).
 
 > **SmartScreen** ("Windows bilgisayarınızı korudu") *imzasız* her açık kaynak exe için normaldir — hata değil, kodda düzeltilemez. **Ek bilgi → Yine de çalıştır**, ya da indirilen dosyaya `Unblock-File`. Ücretsiz [SignPath OSS](https://signpath.org/open-source) imzası CI'a bağlı (`SIGNPATH_*` secret'ları eklenene kadar atlanır); yerel sertifika `build.ps1 -CertThumbprint <thumbprint>` ile doğrudan imzalar. Build zaten sürüm/yayıncı metadata'sı gömdüğü için UAC imzasızken bile **AsenaPlug** gösterir.
 
@@ -273,7 +289,11 @@ pythonw .\AsenaPlug.pyw             # ilk çalıştırma: UAC -> kurulum -> tray
 - **Kill‑switch:** `windows/killswitch/` altında WFP prototipi var ama **devre dışı** (tünel trafiğini blokluyordu); Windows'ta doğrulanmış bir sürüm için saklı.
 
 #### Kaldırma (Windows)
-Yönetici PowerShell — önce düzgün teardown (NRPT, IPv6 firewall, route, DNS), sonra görev/kısayol/dosya:
+**Ayarlar › Uygulamalar › AsenaPlug** (tek satırla kurulduysa) ya da:
+```powershell
+$env:ASENAPLUG_UNINSTALL = 1; irm https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.ps1 | iex
+```
+İkisi de önce tüneli kapatır ve `config.json` kimliğini korur (`$env:ASENAPLUG_PURGE = 1` ile o da silinir). Elle, yönetici PowerShell — önce düzgün teardown (NRPT, IPv6 firewall, route, DNS), sonra görev/kısayol/dosya:
 ```powershell
 & "C:\Program Files\AsenaPlug\scripts\asena-uninstall.ps1"
 ```
