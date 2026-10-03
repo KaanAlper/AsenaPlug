@@ -159,8 +159,9 @@ sealed class SetupForm : Form
         base.OnHandleCreated(e);
         k = DeviceDpi / 96f;
         ClientSize = new Size((int)(W * k), (int)(H * k));
+        // (the smoke test's window sits off screen: StartSmoke placed it before the handle existed; changing
+        // ShowInTaskbar here would recreate the handle and land here again)
         if (smokeDir == null) CenterToScreen();
-        else { ShowInTaskbar = false; Location = new Point(-6000, -6000); }
         // Windows 11: rounded corners and a frame that matches the theme; Windows 10 ignores both
         int round = 2, dark = light ? 0 : 1;
         DwmSetWindowAttribute(Handle, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, ref round, 4);
@@ -759,6 +760,9 @@ sealed class SetupForm : Form
     {
         smokeDir = dir; smokeAction = act; smokeStart = DateTime.UtcNow;
         tr = false;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        Location = new Point(-6000, -6000);
         Shown += (s, e) =>
         {
             Go(Page.Options);
