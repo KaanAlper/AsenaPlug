@@ -50,6 +50,8 @@ Traffic looks like ordinary HTTPS (MASQUE over HTTP/2 or HTTP/3), so it survives
 ```powershell
 irm https://raw.githubusercontent.com/KaanAlper/AsenaPlug/main/install.ps1 | iex
 ```
+
+**Windowed setup:** [**AsenaPlug-Setup-x64.exe**](https://github.com/KaanAlper/AsenaPlug/releases/latest/download/AsenaPlug-Setup-x64.exe) ([AsenaPlug-Setup-x86.exe](https://github.com/KaanAlper/AsenaPlug/releases/latest/download/AsenaPlug-Setup-x86.exe) for 32-bit Windows) — the same install with buttons: language choice, progress, undo on cancel; when it is already installed it offers **Update / Repair / Uninstall**.
 It downloads the latest `AsenaPlug.exe`, checks its SHA‑256, lets it set itself up in `C:\Program Files\AsenaPlug\`, and adds a Start menu shortcut plus an **Apps & Features** entry with an uninstaller. Run the same line again to update — a running AsenaPlug is disconnected cleanly first, and a failed update puts the previous version back. Log: `%TEMP%\AsenaPlug-install.log`.
 
 **Or download the exe:**

@@ -151,6 +151,11 @@ function Wrap([string]$text, [int]$w) {
     return $out
 }
 function Box([string]$color, [string]$title, [string]$body) {
+    if ($Driver) {
+        $kind = if ($color -eq $COL.ok) { 'ok' } elseif ($color -eq $COL.err) { 'error' } elseif ($color -eq $COL.warn) { 'warn' } else { 'info' }
+        if (-not $title) { Report @{ notes = @($DriverStatus.notes | Where-Object { $_ }) + $body } }
+        elseif ($kind -ne 'info') { Report @{ result = $kind; title = $title; body = $body } }
+    }
     $w = Width; $in = $w - 4; $b = Fg $color
     Write-Host ''
     Write-Host ("  $b$($GL.tl)" + ('─' * ($w - 2)) + "$($GL.tr)$RESET")
@@ -166,7 +171,7 @@ function Banner {
     Write-Host ('  ' + "$ESC[1m" + (Paint $COL.accent $App.Name))
     Write-Host ('  ' + (Paint $COL.dim $T.tagline))
 }
-function Say([string]$sym, [string]$color, [string]$text) { Write-Host ('  ' + (Paint $color $sym) + ' ' + (Paint $COL.text $text)) }
+function Say([string]$sym, [string]$color, [string]$text) { Report @{ say = $text }; Write-Host ('  ' + (Paint $color $sym) + ' ' + (Paint $COL.text $text)) }
 function Human([double]$b) { if ($b -ge 1MB) { '{0:0.0} MB' -f ($b / 1MB) } else { '{0:0} KB' -f ($b / 1KB) } }
 function Bar([double]$frac, [int]$width, [int]$tick) {
     $fill = [int][Math]::Floor($frac * $width); $s = ''
@@ -178,6 +183,18 @@ function Bar([double]$frac, [int]$width, [int]$tick) {
     return $s + $RESET
 }
 function Log([string]$m) { try { Add-Content -LiteralPath $LogFile -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss ') + $m) -Encoding UTF8 } catch {} }
+# ---------------------------------------------------------------- the windowed setup app (installer\gui)
+# It sets <ENV>_DRIVER to a folder of its own, shows status.json from there and drops a "cancel" file in it to stop
+# (the finally block below undoes everything, the same as Ctrl+C). Without it these do nothing.
+$Driver = Opt 'DRIVER'
+$DriverStatus = @{ steps = @() }
+function Report([hashtable]$fields) {
+    if (-not $Driver) { return }
+    foreach ($k in @($fields.Keys)) { $DriverStatus[$k] = $fields[$k] }
+    try { [IO.File]::WriteAllText((Join-Path $Driver 'status.json'), (ConvertTo-Json $DriverStatus -Compress -Depth 4), (New-Object Text.UTF8Encoding $false)) } catch {}
+}
+function Report-Stage([string]$label) { if ($Driver) { Report @{ steps = @($DriverStatus.steps) + $label; state = 'running'; percent = -1 } } }
+function Test-Cancel { if ($Driver -and (Test-Path -LiteralPath (Join-Path $Driver 'cancel'))) { throw (New-Object OperationCanceledException) } }
 
 # ---------------------------------------------------------------- input
 $interactive = (-not (Opt 'DEFAULTS')) -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
@@ -231,6 +248,7 @@ function Confirm([string]$q, [string]$yes, [string]$no, [bool]$default = $true) 
 function Get-WithBar([string]$url, [string]$dst, [string]$label, [long]$sizeHint) {
     # a dropped connection continues where it stopped (HTTP Range) instead of starting over
     $tick = 0; $last = ''
+    Report-Stage $label
     for ($try = 1; $try -le 5; $try++) {
         try {
             $have = if (Test-Path -LiteralPath $dst) { (Get-Item -LiteralPath $dst).Length } else { 0 }
@@ -251,6 +269,7 @@ function Get-WithBar([string]$url, [string]$dst, [string]$label, [long]$sizeHint
                         if ($draw.ElapsedMilliseconds -ge 60) {
                             $draw.Restart(); $tick++
                             $frac = if ($total -gt 0) { [Math]::Min(1.0, [double]$done / $total) } else { 0 }
+                            Report @{ percent = $(if ($total -gt 0) { [int]($frac * 100) } else { -1 }); done = $done; total = $total }; Test-Cancel
                             $speed = if ($sw.Elapsed.TotalSeconds -gt 0.3) { (Human (($done - $have) / $sw.Elapsed.TotalSeconds)) + '/s' } else { '' }
                             $pct = if ($total -gt 0) { '{0,3:0}%' -f ($frac * 100) } else { '' }
                             $info = (Human $done) + $(if ($total -gt 0) { ' / ' + (Human $total) }) + '  ' + $speed
@@ -264,6 +283,7 @@ function Get-WithBar([string]$url, [string]$dst, [string]$label, [long]$sizeHint
             }
             finally { $res.Dispose() }
             if ($total -gt 0 -and $done -lt $total) { throw "the connection closed at $(Human $done) of $(Human $total)" }
+            Report @{ state = 'done'; percent = 100 }
             Write-Host ("`r  " + (Paint $COL.ok $GL.ok) + ' ' + $label + '  ' + (Paint $COL.dim (Human (Get-Item -LiteralPath $dst).Length)) + "$ESC[K")
             return
         }
@@ -284,15 +304,17 @@ function Get-WithBar([string]$url, [string]$dst, [string]$label, [long]$sizeHint
             }
         }
     }
+    Report @{ state = 'error' }
     throw $last
 }
 # "◌ label" while it runs, then ✓ / ✗ in place
 function Step([string]$label, [scriptblock]$sb) {
     $state.stage = $label
     Log "step: $label"
+    Test-Cancel; Report-Stage $label
     Write-Host -NoNewline ('  ' + (Paint $COL.accent $GL.wait) + ' ' + $label)
-    try { $result = & $sb; Write-Host ("`r  " + (Paint $COL.ok $GL.ok) + ' ' + $label + "$ESC[K"); return $result }
-    catch { Write-Host ("`r  " + (Paint $COL.err $GL.fail) + ' ' + $label + "$ESC[K"); throw }
+    try { $result = & $sb; Report @{ state = 'done' }; Write-Host ("`r  " + (Paint $COL.ok $GL.ok) + ' ' + $label + "$ESC[K"); return $result }
+    catch { Report @{ state = 'error' }; Write-Host ("`r  " + (Paint $COL.err $GL.fail) + ' ' + $label + "$ESC[K"); throw }
 }
 
 # ---------------------------------------------------------------- the uninstaller (copied into Program Files\AsenaPlug; Settings > Apps runs it)
@@ -560,6 +582,7 @@ try {
         if (-not $rel) { Box $COL.warn $T.errTitle $T.noRelease; return }
     }
     Log "release $($rel.Version) ($($rel.Name)), installed: $installed"
+    Report @{ version = $rel.Version; size = $rel.Size }
     if ($installed -and $installed -eq $rel.Version -and -not (Opt 'FORCE') -and -not $src) {
         Say $GL.ok $COL.ok ($T.upToDate -f $App.Name, $installed)
         if (-not ($interactive -and (Confirm $T.qReinstall $T.reinstall $T.keep $false))) { return }
@@ -601,6 +624,7 @@ try {
     Log "installed $($rel.Version)"
     if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue }
 
+    Report @{ exe = [string]$exe; version = $rel.Version }
     $done = if ($update) { $T.doneUpd -f $App.Name, $rel.Version } else { $T.doneNew -f $App.Name, $rel.Version }
     Box $COL.ok $done $(if ($App.Command) { $T.doneCli -f $App.Name, $App.Command } else { $T.doneBody -f $App.Name })
     # what was running before the update runs again; a new install asks
@@ -629,6 +653,7 @@ finally {
     if (Test-Path -LiteralPath $stagingDir) { Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue }
     if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
     try { [Console]::OutputEncoding = $oldOut } catch {}
+    Report @{ finished = $true }
     Write-Host -NoNewline $RESET
     Write-Host ''
 }

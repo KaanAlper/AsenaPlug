@@ -8,6 +8,7 @@ on:
     paths:
       - "windows/**"
       - "install.ps1"
+      - "installer/**"
       - "tools/**"
       - ".github/workflows/windows-build.yml"
       - ".github/workflows/release.yml"
@@ -15,6 +16,7 @@ on:
     paths:
       - "windows/**"
       - "install.ps1"
+      - "installer/**"
   workflow_dispatch:
 
 permissions:
@@ -80,8 +82,18 @@ jobs:
           Get-Content "$env:TEMP\AsenaPlug-install.log"
           'install / update / uninstall ok'
 
+      # The windowed setup app (installer/gui): builds both exes, draws every page and proves it starts and talks to install.ps1
+      - name: Setup app - build x64 / x86, draw the pages, run install.ps1's uninstall through the window
+        shell: pwsh
+        run: |
+          ./installer/gui/build.ps1 -Out windows/dist -Shots -Smoke uninstall
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: AsenaPlug-exe
-          path: windows/dist/AsenaPlug.exe
+          path: |
+            windows/dist/AsenaPlug.exe
+            windows/dist/AsenaPlug-Setup-*.exe
+            windows/dist/shots/*.png
+            windows/dist/smoke/*

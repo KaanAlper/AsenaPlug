@@ -112,6 +112,10 @@ jobs:
           "$h  AsenaPlug.exe" | Set-Content AsenaPlug.exe.sha256 -NoNewline -Encoding ascii
           Write-Host "SHA256: $h"
 
+      - name: Pencereli kurulum uygulaması (x64 / x86)
+        shell: pwsh
+        run: ./installer/gui/build.ps1 -Out windows/dist
+
       - name: Release oluştur + exe yükle
         uses: softprops/action-gh-release@v2
         with:
@@ -124,6 +128,10 @@ jobs:
           files: |
             windows/dist/AsenaPlug.exe
             windows/dist/AsenaPlug.exe.sha256
+            windows/dist/AsenaPlug-Setup-x64.exe
+            windows/dist/AsenaPlug-Setup-x64.exe.sha256
+            windows/dist/AsenaPlug-Setup-x86.exe
+            windows/dist/AsenaPlug-Setup-x86.exe.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
           draft: false
