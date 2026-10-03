@@ -55,7 +55,7 @@ jobs:
         shell: pwsh
         run: |
           cd windows
-          .\build.ps1 -NoInstall
+          .\build.ps1
 
       - name: install.ps1 - kur, güncelle, kaldır
         shell: powershell
