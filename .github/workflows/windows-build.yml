@@ -1,0 +1,87 @@
+name: Build Windows EXE
+
+# Her Windows değişikliğinde / PR'da: testler, exe build'i (PyInstaller) ve install.ps1'in gerçek
+# Windows'ta kur / güncelle / kaldır denemesi. Yayımlamaz — sürüm için: Actions > "Release Windows EXE".
+on:
+  push:
+    branches: [main]
+    paths:
+      - "windows/**"
+      - "install.ps1"
+      - "tools/**"
+      - ".github/workflows/windows-build.yml"
+      - ".github/workflows/release.yml"
+  pull_request:
+    paths:
+      - "windows/**"
+      - "install.ps1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: windows/killswitch/go.mod
+
+      - name: Sürümü ayarla (0.0.<run_number>, yalnız bu build için)
+        shell: pwsh
+        run: |
+          $p = "windows/asenaplug/paths.py"
+          (Get-Content $p) -replace 'APP_VERSION = "[^"]*"', 'APP_VERSION = "0.0.${{ github.run_number }}"' | Set-Content $p
+
+      - name: Testler
+        shell: pwsh
+        run: |
+          python -m pip install -r windows/requirements.txt pytest
+          python -m pytest windows/tests -q
+
+      - name: EXE build (PyInstaller / build.ps1)
+        shell: pwsh
+        run: |
+          cd windows
+          .\build.ps1 -NoInstall
+
+      - name: install.ps1 - kur, güncelle, kaldır
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pf = Join-Path $env:ProgramFiles 'AsenaPlug'
+          $key = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AsenaPlug'
+          $lnk = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'AsenaPlug.lnk'
+          $env:ASENAPLUG_SOURCE = (Resolve-Path 'windows/dist/AsenaPlug.exe').Path
+          $env:ASENAPLUG_DEFAULTS = '1'
+          ./install.ps1
+          foreach ($f in "$pf\AsenaPlug.exe", "$pf\uninstall.ps1", "$pf\scripts\asena-off.ps1", $key, $lnk) { if (-not (Test-Path $f)) { Get-Content "$env:TEMP\AsenaPlug-install.log" -ErrorAction SilentlyContinue; throw "missing after install: $f" } }
+          if (-not (Get-ScheduledTask -TaskName 'AsenaPlug_Tray' -ErrorAction SilentlyContinue)) { throw 'tray task not registered' }
+          # the second run takes the update path (tunnel down, old copy stopped, exe refreshed)
+          ./install.ps1
+          if (-not (Test-Path "$pf\AsenaPlug.exe") -or (Test-Path "$pf\AsenaPlug.exe.previous")) { Get-Content "$env:TEMP\AsenaPlug-install.log"; throw 'update failed' }
+          $env:ASENAPLUG_UNINSTALL = '1'
+          ./install.ps1
+          Start-Sleep -Seconds 5
+          foreach ($f in $pf, $key, $lnk, "$env:ProgramData\AsenaPlug\installed.flag") { if (Test-Path $f) { Get-Content "$env:TEMP\AsenaPlug-install.log"; throw "left behind after uninstall: $f" } }
+          if (Get-ScheduledTask -TaskName 'AsenaPlug_Tray' -ErrorAction SilentlyContinue) { throw 'tray task left behind' }
+          Get-Content "$env:TEMP\AsenaPlug-install.log"
+          'install / update / uninstall ok'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AsenaPlug-exe
+          path: windows/dist/AsenaPlug.exe

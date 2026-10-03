@@ -1,32 +1,66 @@
-name: Build & Release Windows EXE
+name: Release Windows EXE
 
-# Her main push'unda: sürümü otomatik artır (1.0.<build#>), exe'yi PyInstaller ile
-# build et (auto-py-to-exe GEREKMEZ — altta zaten PyInstaller var), v1.0.<build#>
-# tag'li release oluştur ve AsenaPlug.exe'yi asset olarak yükle. Kullanıcı hiç
-# build almaz / tag atmaz; çalışan uygulamalar bu release'i görüp kendini günceller.
+# Actions > "Release Windows EXE" > Run workflow. Sürüm, son Windows sürümünden (vX.Y.Z etiketi) bu yana
+# gelen commit'lerden hesaplanır (semantic versioning, Logical Lunge ile aynı kural): "feat:" -> MINOR,
+# "fix:" / "perf:" / diğerleri -> PATCH, tipten sonra "!" ya da bir breaking-change footer'ı -> MAJOR.
+# "bump" ile seviye elle seçilir. Daha önce kullanılmış bir etiket (başarısız denemeler dahil) asla yeniden
+# kullanılmaz; android-v* ve usque-latest etiketleri sayılmaz.
+# Exe PyInstaller ile build edilir (windows/build.ps1), release 'latest' olur: çalışan uygulamalar
+# /releases/latest'i görüp kendini günceller, install.ps1 de buradan kurar.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "windows/**"          # sadece Windows kodu değişince release (gereksiz build yok)
-  workflow_dispatch:           # GitHub UI'dan "Run workflow" ile manuel de tetiklenir
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version step: auto reads the commits (feat: minor, fix: patch, '!' after the type or a breaking-change footer: major)"
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+        required: true
+      notes:
+        description: "Release notes (optional)"
+        type: string
+        default: ""
 
 permissions:
   contents: write              # release + tag oluşturmak için
 
-concurrency:                   # üst üste push'larda yalnız en sonu yayınla
+concurrency:
   group: release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 40
     # İmzalama secret'ı (Repo Settings > Secrets). Tanımlı DEĞİLSE imza adımı
     # atlanır, build yine imzasız çıkar (SmartScreen uyarısı sürer ama release olur).
     env:
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sonraki sürümü hesapla
+        id: ver
+        shell: pwsh
+        env:
+          BUMP: ${{ inputs.bump || 'auto' }}
+        run: |
+          $tags = @(git tag --list 'v*')
+          $last = $tags | Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]($_ -replace '^v', '') } -Descending | Select-Object -First 1
+          $commits = @()
+          if ($last) { $commits = @((git log "$last..HEAD" --format='%s%n%b%x1e') -join "`n" -split [char]0x1e) }
+          $v = & ./tools/release-version.ps1 -BaseVersion '1.0.0' -Tags $tags -Commits $commits -Bump $env:BUMP
+          Write-Host "Son sürüm: $last, adım: $env:BUMP -> $v"
+          $p = "windows/asenaplug/paths.py"
+          $src = Get-Content $p -Raw
+          $new = $src -replace 'APP_VERSION = "[^"]*"', "APP_VERSION = `"$v`""
+          if ($new -eq $src -and $src -notmatch "APP_VERSION = `"$([regex]::Escape($v))`"") { throw 'APP_VERSION satırı bulunamadı' }
+          [IO.File]::WriteAllText((Resolve-Path $p), $new, (New-Object Text.UTF8Encoding $false))
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "sha=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
 
       - uses: actions/setup-python@v5
         with:
@@ -36,16 +70,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: windows/killswitch/go.mod
-
-      - name: Sürümü ayarla (1.0.<run_number>)
-        id: ver
-        shell: pwsh
-        run: |
-          $v = "1.0.${{ github.run_number }}"
-          $p = "windows/asenaplug/paths.py"
-          (Get-Content $p) -replace 'APP_VERSION = "[^"]*"', "APP_VERSION = `"$v`"" | Set-Content $p
-          "version=$v" >> $env:GITHUB_OUTPUT
-          Write-Host "APP_VERSION -> $v"
 
       - name: EXE build (PyInstaller / build.ps1)
         shell: pwsh
@@ -57,9 +81,8 @@ jobs:
       # SIGNPATH_API_TOKEN secret'ı tanımlıysa çalışır. SignPath, artifact'i GitHub'dan
       # çeker, imzalar, imzalıyı geri indirir. Önce unsigned exe'yi artifact yaparız.
       # Gerekli: SIGNPATH_API_TOKEN (secret) + SignPath panelinden org-id/project-slug/
-      # policy-slug (public repo olduğundan slug'lar hassas değil, secret'a gerek yok
-      # ama secret tutmak istersen değiştir). NOT: önce signpath.org/open-source'tan
-      # projeyi ONAYLATMAK + panelde "trusted build system=GitHub" + artifact config gerekir.
+      # policy-slug (vars). NOT: önce signpath.org/open-source'tan projeyi ONAYLATMAK +
+      # panelde "trusted build system=GitHub" + artifact config gerekir.
       - name: Unsigned exe'yi artifact yap (SignPath çeksin)
         if: ${{ env.SIGNPATH_API_TOKEN != '' }}
         id: upload-unsigned
@@ -92,12 +115,16 @@ jobs:
       - name: Release oluştur + exe yükle
         uses: softprops/action-gh-release@v2
         with:
-          # tag 'v1.0.x' DEĞİŞMEZ: Windows updater /releases/latest tag_name'i buna göre
-          # parse ediyor. Sadece görünen ada "Windows" eklendi -> release listesi karışmaz.
+          # tag 'vX.Y.Z' biçimi DEĞİŞMEZ: Windows updater /releases/latest tag_name'i buna göre
+          # parse ediyor. Görünen adda "Windows" -> Android release'leriyle karışmaz.
           tag_name: v${{ steps.ver.outputs.version }}
+          target_commitish: ${{ steps.ver.outputs.sha }}
           name: AsenaPlug Windows v${{ steps.ver.outputs.version }}
+          body: ${{ inputs.notes }}
           files: |
             windows/dist/AsenaPlug.exe
             windows/dist/AsenaPlug.exe.sha256
+          fail_on_unmatched_files: true
           generate_release_notes: true
+          draft: false
           make_latest: "true"
